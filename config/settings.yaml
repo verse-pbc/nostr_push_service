@@ -1,0 +1,30 @@
+nostr:
+  relay_url: "wss://communities.nos.social" # URL of the NIP-29 relay to connect to
+  # Relay's private key (needed for NIP-29 access - !! HANDLE SECURELY !!)
+  # It's better to load this from env var or secrets manager
+  # relay_private_key_hex: "relay_private_key_hex_here"
+
+service:
+  # Service's own keypair (used for NIP-42 auth if needed, separate from relay's key)
+  # Better to load from env var or secrets manager
+  # service_private_key_hex: "service_private_key_hex_here"
+  listen_kinds: # Kinds to subscribe to
+    - 11
+    - 12
+    - 3079
+    - 3080
+  process_window_days: 7 # How far back to look for missed events on startup
+  processed_event_ttl_secs: 604800 # 7 days TTL for processed event IDs
+
+redis:
+  url: "redis://127.0.0.1:6379" # Default URL, overridden by REDIS_URL env var if set
+  connection_pool_size: 10
+
+fcm:
+  project_id: "pub-verse-app"
+  api_endpoint: "https://fcm.googleapis.com" # Default v1 endpoint
+
+cleanup:
+  enabled: true
+  interval_secs: 86400 # Run once a day
+  token_max_age_days: 90

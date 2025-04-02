@@ -1,0 +1,148 @@
+name: Publish Image and Release Deployment
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+    branches: ['main']
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  get_version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: write
+      id-token: write
+      pull-requests: write
+      security-events: write
+      statuses: write
+    outputs:
+      SemVer: ${{ steps.get-version.outputs.SemVer }}
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3.2.0
+        with:
+          versionSpec: "6.2.x"
+
+      - name: Determine Version
+        id: get-version
+        uses: gittools/actions/gitversion/execute@v3.2.0
+
+      - name: Output Version
+        run: |
+          echo "# Version:" >> $GITHUB_STEP_SUMMARY
+          echo ${{ steps.get-version.outputs.SemVer }} >> $GITHUB_STEP_SUMMARY
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379 # Optional: Map port if needed for debugging, but service name is used in test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-index-
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-target-
+
+      - name: Run tests
+        # Point tests to the Redis service container started above
+        # The service hostname is the key used in the `services` block ('redis')
+        env:
+          REDIS_URL: redis://redis:6379
+          RUST_LOG: info # Set log level for tests
+          RUST_BACKTRACE: 1
+        run: cargo test --verbose
+
+  push_to_registry:
+    needs: [get_version, test] # Add dependency on the test job
+    if: github.ref == 'refs/heads/main'
+    name: Push Docker image to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Log in to the Github Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ needs.get_version.outputs.SemVer }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        id: build-and-push-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Output Image Details
+        if: steps.build-and-push-image.outcome == 'success'
+        run: |
+          echo "# Built and pushed the following images:" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
+
+# Removed merge_to_release job as it's not applicable to the current project structure.

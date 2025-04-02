@@ -1,0 +1,42 @@
+services:
+  plur-push-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: plur-push-service
+    environment:
+      # Logging level for the application
+      - RUST_LOG=info
+      # Nostr settings
+      - PLUR_PUSH__NOSTR__RELAY_URL=ws://host.docker.internal:8080
+      # Service identity private key (used as client signer)
+      - PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX=6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e
+      # Redis settings - Points to the Redis service below
+      - PLUR_PUSH__REDIS__URL=redis://redis:6379
+      # FCM settings - REPLACE with your project ID
+      - PLUR_PUSH__FCM__PROJECT_ID=plur-623b0
+      # Google Application Credentials path inside the container
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/serviceAccountKey.json
+    volumes:
+      # Mount the local secrets directory containing serviceAccountKey.json
+      # Create a ./secrets directory locally and place your FCM key file there
+      - ./secrets:/app/secrets:ro # Mount read-only
+    restart: unless-stopped
+    # Wait for Redis to be available (basic dependency)
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:alpine
+    container_name: redis
+    restart: unless-stopped
+    # Explicitly enable AOF persistence for better data durability
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    # Optional: Expose Redis port to host if needed for external debugging
+    # ports:
+    #   - "6379:6379"
+
+volumes:
+  redis_data:

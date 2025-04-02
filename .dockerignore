@@ -1,0 +1,17 @@
+# Ignore secrets and build artifacts
+*.json
+*.log
+
+# Build related
+target/
+
+# IDE specific
+.idea/
+.vscode/
+
+# OS specific
+.DS_Store
+
+secrets/
+**/.git
+**/.gitignore
