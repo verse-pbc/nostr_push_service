@@ -66,13 +66,30 @@ async fn setup_test_environment() -> Result<(
 
     settings.nostr.relay_url = relay_url_str;
 
-    let mut app_state = plur_push_service::state::AppState::new(settings).await?;
-    cleanup_redis(&app_state.redis_pool).await?;
+    // Manually construct AppState to inject MockFcmSender
+    let redis_pool = plur_push_service::redis_store::create_pool(
+        &redis_url_env, // Use the env var directly, as AppState::new() did
+        settings.redis.connection_pool_size,
+    )
+    .await?;
+    cleanup_redis(&redis_pool).await?; // Cleanup *before* returning state
+
     let mock_fcm_sender_instance = plur_push_service::fcm_sender::MockFcmSender::new();
-    let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone());
-    app_state.fcm_client = Arc::new(plur_push_service::fcm_sender::FcmClient::new_with_impl(
+    let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone()); // Arc for returning
+
+    // Create FcmClient wrapper with the mock implementation
+    let fcm_client = Arc::new(plur_push_service::fcm_sender::FcmClient::new_with_impl(
         Box::new(mock_fcm_sender_instance),
     ));
+
+    let service_keys = settings.get_service_keys();
+
+    let app_state = plur_push_service::state::AppState {
+        settings,
+        redis_pool,
+        fcm_client,
+        service_keys,
+    };
 
     Ok((
         Arc::new(app_state),
