@@ -7,6 +7,7 @@ pub mod error;
 pub mod event_handler;
 pub mod fcm_sender;
 pub mod models;
+pub mod nostr;
 pub mod nostr_listener;
 pub mod redis_store;
 pub mod state;

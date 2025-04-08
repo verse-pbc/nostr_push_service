@@ -181,8 +181,17 @@ async fn handle_group_message(
 
     if token.is_cancelled() {
         info!(event_id = %event.id, "Cancelled before handling group message.");
-        return Err(crate::error::ServiceError::Cancelled.into());
+        return Err(crate::error::ServiceError::Cancelled);
     }
+
+    // Extract the group ID from the first 'h' tag found
+    let group_id = event.tags.find(TagKind::h()).and_then(|tag| tag.content());
+
+    let Some(group_id) = group_id else {
+        warn!(event_id = %event.id, "Group message event missing 'h' tag or group ID, cannot determine group. Skipping.");
+        return Ok(());
+    };
+    debug!(event_id = %event.id, %group_id, "Extracted group ID");
 
     let mentioned_pubkeys = extract_mentioned_pubkeys(event);
     debug!(event_id = %event.id, mentions = mentioned_pubkeys.len(), "Extracted mentioned pubkeys");
@@ -195,21 +204,41 @@ async fn handle_group_message(
     for target_pubkey in mentioned_pubkeys {
         if token.is_cancelled() {
             info!(event_id = %event.id, "Cancelled during group message pubkey processing loop.");
-            return Err(crate::error::ServiceError::Cancelled.into());
+            return Err(crate::error::ServiceError::Cancelled);
         }
 
-        trace!(event_id = %event.id, target_pubkey = %target_pubkey, "Processing mention");
+        trace!(event_id = %event.id, target_pubkey = %target_pubkey, %group_id, "Processing mention for group");
 
         if target_pubkey == event.pubkey {
             trace!(event_id = %event.id, target_pubkey = %target_pubkey, "Skipping notification to self");
             continue;
         }
 
+        // Check if the mentioned user is a member of the group
+        match state
+            .nip29_client
+            .is_group_member(&group_id, &target_pubkey)
+            .await
+        {
+            Ok(true) => {
+                trace!(event_id = %event.id, target_pubkey = %target_pubkey, %group_id, "Target user is a group member. Proceeding with notification.");
+                // User is a member, continue to send notification
+            }
+            Ok(false) => {
+                debug!(event_id = %event.id, target_pubkey = %target_pubkey, %group_id, "Target user is not a member of the group. Skipping notification.");
+                continue; // Skip this user, move to the next mentioned pubkey
+            }
+            Err(e) => {
+                error!(event_id = %event.id, target_pubkey = %target_pubkey, %group_id, error = %e, "Failed to check group membership. Skipping notification for this user.");
+                continue; // Skip this user due to error, move to the next
+            }
+        }
+
         let tokens = tokio::select! {
             biased;
             _ = token.cancelled() => {
                 info!(event_id = %event.id, target_pubkey = %target_pubkey, "Cancelled while fetching tokens.");
-                return Err(crate::error::ServiceError::Cancelled.into());
+                return Err(crate::error::ServiceError::Cancelled);
             }
             res = redis_store::get_tokens_for_pubkey(&state.redis_pool, &target_pubkey) => {
                 res?
@@ -231,7 +260,7 @@ async fn handle_group_message(
             biased;
             _ = token.cancelled() => {
                 info!(event_id = %event.id, target_pubkey = %target_pubkey, "Cancelled during FCM send batch.");
-                return Err(crate::error::ServiceError::Cancelled.into());
+                return Err(crate::error::ServiceError::Cancelled);
             }
             send_result = state.fcm_client.send_batch(&tokens, payload) => {
                 send_result
@@ -245,7 +274,7 @@ async fn handle_group_message(
         for (fcm_token, result) in results {
             if token.is_cancelled() {
                 info!(event_id = %event.id, target_pubkey = %target_pubkey, "Cancelled while processing FCM results.");
-                return Err(crate::error::ServiceError::Cancelled.into());
+                return Err(crate::error::ServiceError::Cancelled);
             }
 
             let truncated_token = &fcm_token[..8.min(fcm_token.len())];
@@ -274,7 +303,7 @@ async fn handle_group_message(
             for fcm_token_to_remove in tokens_to_remove {
                 if token.is_cancelled() {
                     info!(event_id = %event.id, target_pubkey = %target_pubkey, "Cancelled while removing invalid tokens.");
-                    return Err(crate::error::ServiceError::Cancelled.into());
+                    return Err(crate::error::ServiceError::Cancelled);
                 }
                 let truncated_token = &fcm_token_to_remove[..8.min(fcm_token_to_remove.len())];
                 if let Err(e) = redis_store::remove_token_globally(

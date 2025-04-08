@@ -3,6 +3,10 @@ name = "plur_push_service"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+test-helpers = []
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -62,3 +66,4 @@ url = "2.5"
 # Add nostr-relay-builder back
 nostr-relay-builder = { version = "0.40.0", package = "nostr-relay-builder" }
 plur_push_service = { path = "." }
+# testcontainers = "0.20.0" # Removed

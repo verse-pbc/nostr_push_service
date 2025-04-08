@@ -15,11 +15,23 @@ pub enum ServiceError {
     #[error("FCM error: {0}")]
     Fcm(#[from] FcmError),
 
-    #[error("Nostr SDK error: {0}")]
-    NostrSdk(#[from] nostr_sdk::client::Error),
+    #[error("Nostr SDK client error: {0}")]
+    NostrSdkError(#[from] nostr_sdk::client::Error),
 
-    #[error("Nostr Event error: {0}")]
-    NostrKeys(#[from] nostr_sdk::key::Error),
+    #[error("Nostr key error: {0}")]
+    NostrKeyError(#[from] nostr_sdk::key::Error),
+
+    #[error("Nostr NIP-19 (bech32) error: {0}")]
+    NostrNip19Error(#[from] nostr_sdk::nips::nip19::Error),
+
+    #[error("Nostr URL error: {0}")]
+    NostrUrlError(#[from] nostr_sdk::types::url::Error),
+
+    #[error("Nostr Tag parse error: {0}")]
+    NostrTagError(#[from] nostr_sdk::event::tag::Error),
+
+    #[error("Nostr Event build error: {0}")]
+    NostrEventBuildError(#[from] nostr_sdk::event::builder::Error),
 
     #[error("Tokio task join error: {0}")]
     TokioJoin(#[from] tokio::task::JoinError),
@@ -51,13 +63,27 @@ impl IntoResponse for ServiceError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Redis error: {}", e),
             ),
-            ServiceError::NostrSdk(e) => (
+            ServiceError::NostrSdkError(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Nostr SDK error: {}", e),
             ),
-            ServiceError::NostrKeys(e) => (
+            ServiceError::NostrKeyError(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Nostr event error: {}", e),
+                format!("Nostr key error: {}", e),
+            ),
+            ServiceError::NostrNip19Error(e) => (
+                StatusCode::BAD_REQUEST,
+                format!("Nostr NIP-19 error: {}", e),
+            ),
+            ServiceError::NostrUrlError(e) => {
+                (StatusCode::BAD_REQUEST, format!("Nostr URL error: {}", e))
+            }
+            ServiceError::NostrTagError(e) => {
+                (StatusCode::BAD_REQUEST, format!("Nostr Tag error: {}", e))
+            }
+            ServiceError::NostrEventBuildError(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Nostr Event build error: {}", e),
             ),
             ServiceError::TokioJoin(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,

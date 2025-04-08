@@ -7,12 +7,16 @@ use crate::{
 use nostr_sdk::Keys;
 use std::{env, sync::Arc};
 
+use crate::error::ServiceError;
+use crate::nostr::nip29::{init_nip29_client, Nip29Client};
+
 /// Shared application state
 pub struct AppState {
     pub settings: Settings,
     pub redis_pool: RedisPool,
     pub fcm_client: Arc<FcmClient>,
     pub service_keys: Option<Keys>,
+    pub nip29_client: Arc<Nip29Client>,
 }
 
 impl AppState {
@@ -39,12 +43,16 @@ impl AppState {
             redis_store::create_pool(&redis_url, settings.redis.connection_pool_size).await?;
         let fcm_client = Arc::new(FcmClient::new(&settings.fcm)?);
         let service_keys = settings.get_service_keys();
+        let nip29_client = init_nip29_client(&settings).await.map_err(|e| {
+            ServiceError::Internal(format!("Failed to initialize Nip29Client: {}", e))
+        })?;
 
         Ok(AppState {
             settings,
             redis_pool,
             fcm_client,
             service_keys,
+            nip29_client,
         })
     }
 }

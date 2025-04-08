@@ -22,14 +22,32 @@ pub async fn run(
         .ok_or_else(|| ServiceError::Internal("Nostr service keys not configured".to_string()))?;
     let service_pubkey = service_keys.public_key();
 
-    let client = Client::builder().signer(service_keys).build();
+    // Get the shared Nostr client from AppState (via Nip29Client)
+    let client = state.nip29_client.client();
 
-    let relay_url_str = &state.settings.nostr.relay_url;
-    client.add_relay(relay_url_str.as_str()).await?;
-
-    tracing::info!("Connecting to Nostr relays: {}", relay_url_str);
-    client.connect().await;
-    tracing::info!("Nostr client connected.");
+    // Ensure the client is connected (Nip29Client::new should handle this, but double-check)
+    if client.relays().await.is_empty() || !client.relays().await.values().any(|s| s.is_connected())
+    {
+        warn!("Nostr client from AppState is not connected or has no relays. Attempting to connect...");
+        // Use the relay URL from settings if available, otherwise error
+        let relay_url_str = &state.settings.nostr.relay_url;
+        if !relay_url_str.is_empty() {
+            client.add_relay(relay_url_str.as_str()).await?;
+            client.connect().await;
+            if !client.relays().await.values().any(|s| s.is_connected()) {
+                return Err(ServiceError::Internal(
+                    "Failed to connect the shared Nostr client".to_string(),
+                ));
+            }
+            info!("Shared Nostr client reconnected successfully.");
+        } else {
+            return Err(ServiceError::Internal(
+                "Nostr relay URL missing in settings, cannot connect shared client".to_string(),
+            ));
+        }
+    } else {
+        info!("Using shared Nostr client from AppState.");
+    }
 
     let process_window_duration =
         Duration::from_secs(state.settings.service.process_window_days as u64 * 24 * 60 * 60);
@@ -218,7 +236,6 @@ pub async fn run(
     }
 
     info!("Nostr listener shutting down.");
-    client.disconnect().await;
-    info!("Nostr client disconnected.");
+    // Do not disconnect the shared client here, let the Nip29Client owner manage its lifecycle
     Ok(())
 }

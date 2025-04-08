@@ -19,6 +19,7 @@ use plur_push_service::{
     state::AppState,
 };
 use redis::AsyncCommands; // For direct Redis interaction
+use std::collections::HashSet; // Added for cache manipulation
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,13 +43,12 @@ async fn setup_test_environment() -> Result<(
     let redis_host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
     let redis_port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
     let redis_url_constructed = format!("redis://{}:{}", redis_host, redis_port);
-    println!("Constructed Redis URL: {}", redis_url_constructed);
 
     // --- Safety Check: Prevent running tests against DigitalOcean Redis ---
     if let Ok(parsed_url) = url::Url::parse(&redis_url_constructed) {
         if parsed_url
             .host_str()
-            .map_or(false, |host| host.ends_with(".db.ondigitalocean.com"))
+            .is_some_and(|host| host.ends_with(".db.ondigitalocean.com"))
         {
             panic!(
                 "Safety check failed: Redis URL points to a DigitalOcean managed database ({}). \
@@ -59,24 +59,27 @@ async fn setup_test_environment() -> Result<(
     }
     // --- End Safety Check ---
 
-    let mut settings = Settings::new()?;
-    let test_service_keys = Keys::generate(); // Generate keys for the service in tests
+    // For testing purposes, we'll use a hardcoded test key in hex format
+    let test_key_hex = "0000000000000000000000000000000000000000000000000000000000000001";
 
-    println!("Starting MockRelay...");
+    // Set the environment variable with our test key hex
+    std::env::set_var("PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX", test_key_hex);
+
+    let mut settings = Settings::new()
+        .map_err(|e| anyhow!("Failed to load settings after setting env var: {}", e))?;
+    let test_service_keys = Keys::generate(); // Generate separate keys for the service instance
+
     let mock_relay = MockRelay::run().await?;
     let relay_url_str = mock_relay.url();
-    println!("MockRelay running at: {}", relay_url_str);
 
     let relay_url = Url::parse(&relay_url_str)?;
 
-    settings.nostr.relay_url = relay_url_str;
+    settings.nostr.relay_url = relay_url_str.clone();
 
     // Add a longer delay to allow the Redis service container to fully initialize in CI
-    println!("Waiting 5 seconds for Redis service to fully initialize...");
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Manually construct AppState to inject MockFcmSender
-    println!("Creating Redis connection pool...");
     let redis_pool = plur_push_service::redis_store::create_pool(
         &redis_url_constructed, // Use the constructed URL
         settings.redis.connection_pool_size,
@@ -86,7 +89,6 @@ async fn setup_test_environment() -> Result<(
         println!("Redis pool creation error: {}", e);
         e
     })?;
-    println!("Redis pool created successfully.");
 
     println!("Cleaning up Redis...");
     cleanup_redis(&redis_pool).await?; // Cleanup *before* returning state
@@ -100,11 +102,25 @@ async fn setup_test_environment() -> Result<(
         Box::new(mock_fcm_sender_instance),
     ));
 
+    // Initialize Nip29Client for the AppState, ensuring it connects to the mock relay
+    let nip29_cache_expiration = settings.nostr.cache_expiration.unwrap_or(300);
+    let nip29_client = plur_push_service::nostr::nip29::Nip29Client::new(
+        relay_url_str.clone(),     // Use the mock relay URL
+        test_service_keys.clone(), // Use the service keys generated for this test instance
+        nip29_cache_expiration,
+    )
+    .await
+    .map_err(|e| anyhow!("Failed to create and connect Nip29Client: {}", e))?;
+
+    // Add a small delay to ensure the client has time to establish the connection
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
     let app_state = plur_push_service::state::AppState {
         settings,
         redis_pool,
         fcm_client,
         service_keys: Some(test_service_keys),
+        nip29_client: Arc::new(nip29_client), // Add initialized Nip29Client
     };
 
     Ok((
@@ -163,9 +179,7 @@ async fn test_register_device_token() -> Result<()> {
 
 #[tokio::test]
 async fn test_event_handling() -> Result<()> {
-    println!("Setting up test environment...");
     let (state, fcm_mock, relay_url, _mock_relay) = setup_test_environment().await?;
-    println!("Test environment ready.");
 
     let service_token = CancellationToken::new();
     let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
@@ -173,77 +187,69 @@ async fn test_event_handling() -> Result<()> {
     let listener_state = state.clone();
     let listener_token = service_token.clone();
     let listener_handle = tokio::spawn(async move {
-        println!("Starting Nostr listener task...");
         if let Err(e) = nostr_listener::run(listener_state, event_tx, listener_token).await {
             eprintln!("Nostr listener task error: {}", e);
         }
-        println!("Nostr listener task finished.");
     });
 
     let handler_state = state.clone();
     let handler_token = service_token.clone();
     let handler_handle = tokio::spawn(async move {
-        println!("Starting event handler task...");
         if let Err(e) = event_handler::run(handler_state, event_rx, handler_token).await {
             eprintln!("Event handler task error: {}", e);
         }
-        println!("Event handler task finished.");
     });
 
-    println!("Waiting for services to initialize...");
     tokio::time::sleep(Duration::from_millis(500)).await;
-    println!("Services potentially initialized.");
 
-    println!("Connecting test Nostr client (user A)...");
     let user_a_keys = Keys::generate(); // User A is the one registering the token
     let user_a_client = ClientBuilder::new().signer(user_a_keys.clone()).build();
     user_a_client.add_relay(relay_url.as_str()).await?;
     user_a_client.connect().await;
-    println!("User A client connected to {}", relay_url);
 
     // --- Test Registration (User A) ---
-    println!("Testing registration (Kind 3079) for User A...");
     let fcm_token_user_a = "test_fcm_token_for_user_a";
     let registration_event = EventBuilder::new(Kind::Custom(3079), fcm_token_user_a)
         .sign(&user_a_keys)
         .await?;
-    println!("Sending registration event ID: {}", registration_event.id);
     user_a_client.send_event(&registration_event).await?;
-    println!("Waiting for registration event processing...");
     tokio::time::sleep(Duration::from_millis(500)).await;
-    println!("Asserting Redis state after registration...");
     let stored_tokens =
         redis_store::get_tokens_for_pubkey(&state.redis_pool, &user_a_keys.public_key()).await?;
     assert_eq!(stored_tokens.len(), 1);
     assert_eq!(stored_tokens[0], fcm_token_user_a);
-    println!("Registration Redis state verified.");
 
-    // --- Test Notification Send (User B sends message tagging User A) ---
-    println!("Connecting User B client...");
+    // --- Test Notification Send (User B sends message tagging User A in a group) ---
     let user_b_keys = Keys::generate(); // User B sends the message
     let user_b_client = ClientBuilder::new().signer(user_b_keys.clone()).build();
     user_b_client.add_relay(relay_url.as_str()).await?;
     user_b_client.connect().await;
-    println!("User B client connected.");
 
-    println!("Testing notification send (Kind 11) from User B to User A...");
+    // Define group and add User A to Nip29 cache manually
+    let test_group_id = "test_group_integration";
+    {
+        let cache_arc = (*state.nip29_client).get_cache();
+        let mut cache = cache_arc.write().await;
+        let mut members = HashSet::new();
+        members.insert(user_a_keys.public_key());
+        cache.update_cache(test_group_id, members);
+    }
+
     let mention_tag = Tag::public_key(user_a_keys.public_key());
+    let group_tag = Tag::parse(["h", test_group_id])?;
     let message_content = format!("Hello @{}", user_a_keys.public_key().to_bech32()?);
 
-    // Try adding tag after EventBuilder::new
     let message_event_builder = EventBuilder::new(Kind::Custom(11), &message_content);
     let message_event = message_event_builder
         .tag(mention_tag)
+        .tag(group_tag)
         .sign(&user_b_keys)
         .await?;
 
-    println!("Sending Kind 11 event ID: {}", message_event.id);
-    user_b_client.send_event(&message_event).await?;
-    println!("Waiting for notification event processing...");
-    tokio::time::sleep(Duration::from_millis(500)).await; // Adjust timing if needed
+    user_a_client.send_event(&message_event).await?;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
 
     // Assert FCM mock received the notification for User A's token
-    println!("Asserting FCM mock state...");
     let sent_fcm_messages = fcm_mock.get_sent_messages();
     assert_eq!(
         sent_fcm_messages.len(),
@@ -274,26 +280,18 @@ async fn test_event_handling() -> Result<()> {
         data.get("nostrEventId").map(|s| s.as_str()),
         Some(message_event.id.to_hex().as_str())
     );
-    println!("FCM mock state verified.");
 
     // TODO: 8. Publish Kind 3080 (Deregistration) event
     // ... (event creation, publishing) ...
-    println!("Testing deregistration (Kind 3080) for User A...");
     let deregistration_event = EventBuilder::new(Kind::Custom(3080), fcm_token_user_a)
         .sign(&user_a_keys)
         .await?;
-    println!(
-        "Sending deregistration event ID: {}",
-        deregistration_event.id
-    );
     user_a_client.send_event(&deregistration_event).await?;
 
     // TODO: 9. Assert Redis state for deregistration
     // ... (redis checks) ...
-    println!("Waiting for deregistration event processing...");
     tokio::time::sleep(Duration::from_millis(500)).await; // Give time for event to be processed
 
-    println!("Asserting Redis state after deregistration...");
     let stored_tokens_after_deregistration =
         redis_store::get_tokens_for_pubkey(&state.redis_pool, &user_a_keys.public_key()).await?;
     assert!(
@@ -301,10 +299,8 @@ async fn test_event_handling() -> Result<()> {
         "Expected no tokens for user A after deregistration, found: {:?}",
         stored_tokens_after_deregistration
     );
-    println!("Deregistration Redis state verified.");
 
     // --- Test Notification NOT Sent After Deregistration ---
-    println!("Testing notification NOT sent after deregistration...");
     let message_content_after_dereg = format!(
         "Hello again @{} after deregistration",
         user_a_keys.public_key().to_bech32()?
@@ -316,39 +312,22 @@ async fn test_event_handling() -> Result<()> {
         .sign(&user_b_keys)
         .await?;
 
-    println!(
-        "Sending second Kind 11 event ID: {}",
-        message_event_after_dereg.id
-    );
     user_b_client.send_event(&message_event_after_dereg).await?;
 
-    println!("Waiting for potential (unwanted) notification processing...");
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    println!("Asserting FCM mock state unchanged after deregistration...");
     let sent_fcm_messages_after_dereg = fcm_mock.get_sent_messages();
     assert_eq!(
         sent_fcm_messages_after_dereg.len(),
         1, // Should still be 1 from the *first* notification
         "Expected FCM message count to remain 1 after deregistration, but it changed."
     );
-    println!("FCM mock state verified (no new message sent).");
 
     // --- Shutdown ---
-    println!("Initiating shutdown sequence...");
-    println!("Disconnecting User A client...");
     user_a_client.disconnect().await;
-    println!("User A client disconnected.");
-    println!("Disconnecting User B client...");
     user_b_client.disconnect().await;
-    println!("User B client disconnected.");
-    // ... rest of shutdown ...
-    println!("Cancelling service tasks...");
     service_token.cancel();
-    println!("Waiting for listener task to complete...");
     let _ = listener_handle.await;
-    println!("Waiting for handler task to complete...");
     let _ = handler_handle.await;
-    println!("Test finished.");
     Ok(())
 }

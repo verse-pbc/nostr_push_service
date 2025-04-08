@@ -15,6 +15,7 @@ pub struct Settings {
 #[derive(Debug, Deserialize, Clone)]
 pub struct NostrSettings {
     pub relay_url: String,
+    pub cache_expiration: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -63,5 +64,12 @@ impl Settings {
         let key_hex = self.service.private_key_hex.as_deref()?;
         let secret_key = nostr_sdk::SecretKey::from_hex(key_hex).ok()?;
         Some(nostr_sdk::Keys::new(secret_key))
+    }
+
+    // Helper method to get the private key for NIP-29
+    pub fn get_nostr_private_key(&self) -> Option<nostr_sdk::SecretKey> {
+        // Use the same private_key_hex from ServiceSettings
+        let key_hex = self.service.private_key_hex.as_deref()?;
+        nostr_sdk::SecretKey::from_hex(key_hex).ok()
     }
 }
