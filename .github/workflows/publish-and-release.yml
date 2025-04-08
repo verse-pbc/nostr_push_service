@@ -63,7 +63,6 @@ jobs:
         ports:
           - 6379:6379 # Map port to be accessible from the host as localhost:6379
     env:
-      REDIS_URL: redis://redis:6379 # Use 'redis' hostname inside the container network
       CI: true # Ensure CI flag is set
       RUST_LOG: debug # Higher log level for more information
     steps:
@@ -98,11 +97,10 @@ jobs:
             ${{ runner.os }}-cargo-build-target-
 
       - name: Run tests
-        # Point tests to the Redis service container started above
-        # The service hostname is the key used in the `services` block ('redis')
+        # Point tests to the Redis service container via localhost on the mapped port
         env:
-          REDIS_URL: redis://redis:6379
-          RUST_LOG: info # Set log level for tests
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
           RUST_BACKTRACE: 1
         run: cargo test --verbose
 

@@ -38,34 +38,22 @@ async fn setup_test_environment() -> Result<(
     MockRelay,
 )> {
     dotenvy::dotenv().ok();
-    let mut redis_url_env =
-        env::var("REDIS_URL").expect("REDIS_URL must be set for integration tests");
-
-    // In CI environment, GitHub Actions service containers use the service name as hostname
-    if env::var("CI").is_ok() {
-        println!(
-            "CI environment detected. Original Redis URL: {}",
-            redis_url_env
-        );
-        // Replace localhost with 'redis' for GitHub Actions
-        if redis_url_env.contains("localhost") || redis_url_env.contains("127.0.0.1") {
-            redis_url_env = redis_url_env
-                .replace("localhost", "redis")
-                .replace("127.0.0.1", "redis");
-            println!("Adjusted Redis URL for CI: {}", redis_url_env);
-        }
-    }
+    // Use REDIS_HOST and REDIS_PORT, falling back to defaults if not set
+    let redis_host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let redis_port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
+    let redis_url_constructed = format!("redis://{}:{}", redis_host, redis_port);
+    println!("Constructed Redis URL: {}", redis_url_constructed);
 
     // --- Safety Check: Prevent running tests against DigitalOcean Redis ---
-    if let Ok(parsed_url) = url::Url::parse(&redis_url_env) {
+    if let Ok(parsed_url) = url::Url::parse(&redis_url_constructed) {
         if parsed_url
             .host_str()
             .map_or(false, |host| host.ends_with(".db.ondigitalocean.com"))
         {
             panic!(
-                "Safety check failed: REDIS_URL points to a DigitalOcean managed database ({}). \
+                "Safety check failed: Redis URL points to a DigitalOcean managed database ({}). \
         Aborting test to prevent potential data loss.",
-                redis_url_env
+                redis_url_constructed
             );
         }
     }
@@ -85,12 +73,11 @@ async fn setup_test_environment() -> Result<(
     // Add a longer delay to allow the Redis service container to fully initialize in CI
     println!("Waiting 5 seconds for Redis service to fully initialize...");
     tokio::time::sleep(Duration::from_secs(5)).await;
-    println!("Connecting to Redis at {}", redis_url_env);
 
     // Manually construct AppState to inject MockFcmSender
     println!("Creating Redis connection pool...");
     let redis_pool = plur_push_service::redis_store::create_pool(
-        &redis_url_env, // Use the env var directly, as AppState::new() did
+        &redis_url_constructed, // Use the constructed URL
         settings.redis.connection_pool_size,
     )
     .await

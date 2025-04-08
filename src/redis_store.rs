@@ -4,6 +4,7 @@ use bb8_redis::RedisConnectionManager;
 use nostr_sdk::{EventId, PublicKey, Timestamp};
 use redis::{RedisResult, Value};
 use std::convert::TryInto;
+use std::time::Duration;
 
 // Type alias for the connection pool
 pub type RedisPool = Pool<RedisConnectionManager>;
@@ -19,6 +20,7 @@ pub async fn create_pool(redis_url: &str, pool_size: u32) -> Result<RedisPool> {
     let manager = RedisConnectionManager::new(redis_url).map_err(ServiceError::Redis)?;
     Pool::builder()
         .max_size(pool_size)
+        .connection_timeout(Duration::from_secs(15))
         .build(manager)
         .await
         .map_err(|e| ServiceError::Internal(format!("Failed to build Redis pool: {}", e)))
