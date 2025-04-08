@@ -38,7 +38,23 @@ async fn setup_test_environment() -> Result<(
     MockRelay,
 )> {
     dotenvy::dotenv().ok();
-    let redis_url_env = env::var("REDIS_URL").expect("REDIS_URL must be set for integration tests");
+    let mut redis_url_env =
+        env::var("REDIS_URL").expect("REDIS_URL must be set for integration tests");
+
+    // In CI environment, GitHub Actions service containers use the service name as hostname
+    if env::var("CI").is_ok() {
+        println!(
+            "CI environment detected. Original Redis URL: {}",
+            redis_url_env
+        );
+        // Replace localhost with 'redis' for GitHub Actions
+        if redis_url_env.contains("localhost") || redis_url_env.contains("127.0.0.1") {
+            redis_url_env = redis_url_env
+                .replace("localhost", "redis")
+                .replace("127.0.0.1", "redis");
+            println!("Adjusted Redis URL for CI: {}", redis_url_env);
+        }
+    }
 
     // --- Safety Check: Prevent running tests against DigitalOcean Redis ---
     if let Ok(parsed_url) = url::Url::parse(&redis_url_env) {
@@ -66,16 +82,27 @@ async fn setup_test_environment() -> Result<(
 
     settings.nostr.relay_url = relay_url_str;
 
-    // Add a small delay to allow the Redis service container to fully initialize in CI
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Add a longer delay to allow the Redis service container to fully initialize in CI
+    println!("Waiting 5 seconds for Redis service to fully initialize...");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    println!("Connecting to Redis at {}", redis_url_env);
 
     // Manually construct AppState to inject MockFcmSender
+    println!("Creating Redis connection pool...");
     let redis_pool = plur_push_service::redis_store::create_pool(
         &redis_url_env, // Use the env var directly, as AppState::new() did
         settings.redis.connection_pool_size,
     )
-    .await?;
+    .await
+    .map_err(|e| {
+        println!("Redis pool creation error: {}", e);
+        e
+    })?;
+    println!("Redis pool created successfully.");
+
+    println!("Cleaning up Redis...");
     cleanup_redis(&redis_pool).await?; // Cleanup *before* returning state
+    println!("Redis cleanup completed successfully.");
 
     let mock_fcm_sender_instance = plur_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone()); // Arc for returning
