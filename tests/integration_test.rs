@@ -60,6 +60,7 @@ async fn setup_test_environment() -> Result<(
     // --- End Safety Check ---
 
     let mut settings = Settings::new()?;
+    let test_service_keys = Keys::generate(); // Generate keys for the service in tests
 
     println!("Starting MockRelay...");
     let mock_relay = MockRelay::run().await?;
@@ -99,13 +100,11 @@ async fn setup_test_environment() -> Result<(
         Box::new(mock_fcm_sender_instance),
     ));
 
-    let service_keys = settings.get_service_keys();
-
     let app_state = plur_push_service::state::AppState {
         settings,
         redis_pool,
         fcm_client,
-        service_keys,
+        service_keys: Some(test_service_keys),
     };
 
     Ok((
