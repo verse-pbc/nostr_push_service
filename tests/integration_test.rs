@@ -66,6 +66,9 @@ async fn setup_test_environment() -> Result<(
 
     settings.nostr.relay_url = relay_url_str;
 
+    // Add a small delay to allow the Redis service container to fully initialize in CI
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     // Manually construct AppState to inject MockFcmSender
     let redis_pool = plur_push_service::redis_store::create_pool(
         &redis_url_env, // Use the env var directly, as AppState::new() did
