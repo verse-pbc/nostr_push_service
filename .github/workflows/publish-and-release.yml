@@ -148,4 +148,41 @@ jobs:
           echo "# Built and pushed the following images:" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
 
-# Removed merge_to_release job as it's not applicable to the current project structure.
+  merge_to_release:
+    name: Merge to Release
+    needs: [ push_to_registry, get_version ]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+
+      - name: Check Out the Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge main Branch Locally
+        shell: bash
+        run: |
+          git config --global user.name "$verse-ci"
+          git config --global user.email "$ci@verse.app"
+          git checkout release
+          git merge -Xtheirs --no-commit origin/main
+
+      - name: Apply Newest Version
+        shell: bash
+        run: |
+          echo "Image tag being patched to manifests:"
+          echo ${{ needs.get_version.outputs.SemVer }}
+          yq -i '.version = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/route96/Chart.yaml
+          yq -i '.appVersion = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/route96/Chart.yaml
+          yq -i '.image.tag = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/route96/values.yaml
+
+      - name: Commit and Push to Trigger Release
+        shell: bash
+        run: |
+          git tag ${{ needs.get_version.outputs.SemVer }}
+          git commit -a -m "Version ${{ needs.get_version.outputs.SemVer }} Release"
+          git push
+          git push --tags
