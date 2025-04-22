@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: plur_push-service
-  namespace: plur_push
+  name: plur-push-service
+  namespace: plur-push
   labels:
-    app.kubernetes.io/part-of: plur_push
+    app.kubernetes.io/part-of: plur-push
     app.kubernetes.io/managed-by: Helm
 spec:
   selector:
-    app.kubernetes.io/name: plur_push
+    app.kubernetes.io/name: plur-push
   ports:
     - protocol: TCP
       port: 80

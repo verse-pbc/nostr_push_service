@@ -13,9 +13,6 @@ autoscaling:
   maxReplicas: 1
   targetCPUUtilizationPercentage: 80
 
-persistence:
-  size: "10Gi"
-
 service:
   type: ClusterIP
   port: 80

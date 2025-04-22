@@ -2,12 +2,12 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: plur_push-ingress
-  namespace: plur_push
+  name: plur-push-ingress
+  namespace: plur-push
   annotations:
     kubernetes.io/ingress.class: {{ .Values.ingress.className }}
   labels:
-    app.kubernetes.io/part-of: plur_push
+    app.kubernetes.io/part-of: plur-push
     app.kubernetes.io/managed-by: Helm
 spec:
   rules:
@@ -18,7 +18,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: plur_push-service
+                name: plur-push-service
                 port:
                   number: 80
 {{- end -}}
