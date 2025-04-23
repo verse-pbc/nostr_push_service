@@ -438,6 +438,9 @@ mod tests {
                 interval_secs: 0,
                 token_max_age_days: 0,
             },
+            server: crate::config::ServerSettings {
+                listen_addr: "0.0.0.0:8000".to_string(),
+            },
         };
 
         // Use the from_settings constructor which doesn't connect
