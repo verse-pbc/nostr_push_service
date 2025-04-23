@@ -1,9 +1,10 @@
+use axum::{http::StatusCode, routing::get, Router};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-// Use items from the library crate
 use plur_push_service::cleanup_service;
 use plur_push_service::config;
 use plur_push_service::error::Result;
@@ -13,7 +14,13 @@ use plur_push_service::state; // Assuming Result is pub in error mod
 
 use nostr_sdk::prelude::Event; // Keep this specific use
 
-// A simple replacement for TaskTracker since it's not in tokio_util 0.6.10
+// Reintroduce SimpleTaskTracker
+// NOTE: We are using this custom tracker because the standard
+// `tokio_util::task::TaskTracker` requires tokio-util >= 0.7,
+// but the `firebase-messaging-rs` git dependency currently pulls
+// in `tokio-util` 0.6.x, causing a version conflict.
+// Consider forking `firebase-messaging-rs` or finding an alternative
+// FCM crate to resolve this properly and use `TaskTracker`.
 struct SimpleTaskTracker {
     handles: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -36,6 +43,47 @@ impl SimpleTaskTracker {
         for handle in self.handles {
             let _ = handle.await;
         }
+    }
+}
+
+async fn health_check() -> (StatusCode, &'static str) {
+    (StatusCode::OK, "OK")
+}
+
+async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
+    let app = Router::new().route("/health", get(health_check));
+
+    let listen_addr_str = &app_state.settings.server.listen_addr;
+    let addr: SocketAddr = match listen_addr_str.parse() {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!(
+                "Invalid server.listen_addr '{}': {}. Exiting server task.",
+                listen_addr_str,
+                e
+            );
+            return;
+        }
+    };
+
+    tracing::info!("HTTP server listening on {}", addr);
+
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::error!("Failed to bind HTTP server: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            token.cancelled().await;
+            tracing::info!("HTTP server shutting down.");
+        })
+        .await
+    {
+        tracing::error!("HTTP server error: {}", e);
     }
 }
 
@@ -92,6 +140,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     tracing::info!("Cleanup service started");
 
+    let token_server = token.clone();
+    let state_server = Arc::clone(&app_state);
+    tracker.spawn(async move {
+        run_server(state_server, token_server).await;
+        tracing::info!("HTTP server task finished.");
+    });
+    tracing::info!("HTTP server started");
+
     match signal::ctrl_c().await {
         Ok(()) => tracing::info!("Received shutdown signal"),
         Err(err) => tracing::error!("Failed to listen for shutdown signal: {}", err),
@@ -100,6 +156,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Shutting down services...");
 
     token.cancel();
+
+    // Wait for all tracked tasks to complete using SimpleTaskTracker's wait
     tracker.wait().await;
 
     tracing::info!("Plur Push Service stopped.");

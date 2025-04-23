@@ -24,18 +24,14 @@ impl AppState {
         // Determine Redis URL: prioritize REDIS_URL env var over settings
         let redis_url = match env::var("REDIS_URL") {
             Ok(url_from_env) => {
-                tracing::info!(
-                    "Using Redis URL from REDIS_URL environment variable: {}",
-                    url_from_env
-                );
+                tracing::info!("Using Redis URL from REDIS_URL environment variable");
                 url_from_env
             }
             Err(_) => {
                 tracing::info!(
-                    "REDIS_URL environment variable not set. Using Redis URL from settings: {}",
-                    &settings.redis.url
+                    "REDIS_URL environment variable not set. Using Redis URL from settings"
                 );
-                settings.redis.url.clone() // Clone the URL from settings
+                settings.redis.url.clone()
             }
         };
 

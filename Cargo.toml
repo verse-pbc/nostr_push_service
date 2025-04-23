@@ -11,7 +11,7 @@ test-helpers = []
 
 [dependencies]
 # --- Web Framework & Async Runtime ---
-axum = { version = "0.8", features = ["tokio"] }
+axum = "0.7.5"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 tracing = "0.1"
@@ -26,17 +26,17 @@ config = { version = "0.15", features = ["yaml"] }
 dotenvy = "0.15"
 
 # --- Error Handling ---
-thiserror = "2.0"
+thiserror = "1.0.56"
 anyhow = "1.0" # For general application errors, might replace with more specific errors later
 
 # --- Database / Caching ---
 # sqlx = { version = "0.7", features = [ "runtime-tokio", "tls-rustls", "postgres", "macros", "chrono", "uuid", "json" ] }
 # uuid = { version = "1.4", features = ["v4", "serde"] }
-redis = { version = "0.29", features = ["tokio-comp", "connection-manager"] }
-bb8-redis = { version = "0.21" }
+redis = { version = "0.29.5", features = ["connection-manager", "tls-rustls", "tls-rustls-webpki-roots", "tokio-comp", "tokio-rustls-comp"] }
+bb8-redis = { version = "0.21.0" }
 
 # --- Nostr ---
-nostr-sdk = { version = "0.40.0", features = ["all-nips"] }
+nostr-sdk = "0.41.0"
 hex = "0.4.3"
 url = "2.5"
 
@@ -49,8 +49,9 @@ async-trait = "0.1"
 # --- Firebase Cloud Messaging (FCM) ---
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 firebase-messaging-rs = { git = "https://github.com/i10416/firebase-messaging-rs.git", branch = "main", features = ["fcm", "native-tls"] }
-# Add tokio-util back but with a specific version pinned
-tokio-util = "=0.6.10"
+# Downgrade tokio-util due to conflict with firebase-messaging-rs
+# TaskTracker requires >= 0.7, so we revert to SimpleTaskTracker in main.rs
+tokio-util = "0.6.10" # Remove features entirely
 
 # Dev dependencies for integration tests
 [dev-dependencies]

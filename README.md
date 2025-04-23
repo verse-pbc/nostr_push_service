@@ -32,6 +32,7 @@ The system design involves several components:
 
 The service is configured via environment variables and a `config/settings.yaml` file. Key settings include:
 
+*   `server.listen_addr`: The address and port for the HTTP server (e.g., health check). Defaults to `0.0.0.0:8000`. (Env: `PLUR_PUSH__SERVER__LISTEN_ADDR`)
 *   `nostr.relay_url`: The URL of the Nostr relay to connect to.
 *   `service.service_private_key_hex` (Optional, field name `service_private_key_hex`, overridden by env `PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX`): Private key for the service's Nostr identity. This key is used as the signer for the Nostr client, which enables NIP-42 authentication if the relay requires it from this public key.
 *   `service.listen_kinds`: List of Nostr event kinds to monitor for sending notifications.
@@ -60,4 +61,22 @@ The service is configured via environment variables and a `config/settings.yaml`
     Ensure your environment variables are set (e.g., in a `.env` file) for `GOOGLE_APPLICATION_CREDENTIALS`, `PLUR_PUSH__REDIS__URL`, `PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX`, etc.
     ```bash
     docker compose up -d
+    ```
+
+4.  **Check Health:**
+    Once running, you can check the service's health endpoint:
+    ```bash
+    curl http://localhost:8000/health
+    ```
+    It should return `OK`.
+
+### Using Cargo (Development)
+
+1.  **Build the Service:**
+    ```bash
+    cargo build --release
+    ```
+2.  **Run the Service:**
+    ```bash
+    cargo run --release
     ```
