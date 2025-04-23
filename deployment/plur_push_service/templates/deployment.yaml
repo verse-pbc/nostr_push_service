@@ -67,7 +67,6 @@ spec:
           volumeMounts:
             - name: google-application-credentials
               mountPath: /app/secrets
-              subPath: serviceAccountKey.json
       volumes:
         - name: google-application-credentials
           secret:
