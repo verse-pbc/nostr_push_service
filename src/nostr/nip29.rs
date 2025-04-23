@@ -179,7 +179,7 @@ impl Nip29Client {
         // Cache miss or expired; fetch from relay.
         let filter = Filter::new()
             .kind(GROUP_MEMBERSHIP_KIND)
-            .pubkey(self.relay_keys.public_key()) // Use configured key
+            .author(self.relay_keys.public_key()) // Use configured key
             .identifier(group_id);
 
         info!(%group_id, filter = ?filter, "Fetching group members from relay");
@@ -232,7 +232,7 @@ impl Nip29Client {
 
         let filter = Filter::new()
             .kind(GROUP_ADMINS_KIND)
-            .pubkey(self.relay_keys.public_key())
+            .author(self.relay_keys.public_key())
             .identifier(group_id);
 
         info!(%group_id, filter = ?filter, "Using filter for group admins");
