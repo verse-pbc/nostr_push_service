@@ -66,7 +66,8 @@ spec:
               protocol: TCP
           volumeMounts:
             - name: google-application-credentials
-              mountPath: /app/secrets/serviceAccountKey.json
+              mountPath: /app/secrets
+              subPath: serviceAccountKey.json
       volumes:
         - name: google-application-credentials
           secret:
