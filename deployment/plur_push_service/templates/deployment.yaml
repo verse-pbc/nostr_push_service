@@ -33,8 +33,11 @@ spec:
                 secretKeyRef:
                   name: plur-push-secret
                   key: app-nip29-relay-private-key
-            - name: PLUR_PUSH__REDIS__URL
-              value: private-nos-social-prod-do-user-5049766-0.m.db.ondigitalocean.com
+            - name: PLUR_PUSH__REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: plur-push-secret
+                  key: redis-connection-string
             - name: PLUR_PUSH__FCM__PROJECT_ID
               value: plur-623b0
             - name: GOOGLE_APPLICATION_CREDENTIALS
