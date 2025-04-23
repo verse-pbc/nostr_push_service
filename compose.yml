@@ -21,6 +21,9 @@ services:
       # Mount the local secrets directory containing serviceAccountKey.json
       # Create a ./secrets directory locally and place your FCM key file there
       - ./secrets:/app/secrets:ro # Mount read-only
+    # Expose port 8000 for the health endpoint
+    ports:
+      - "8000:8000"
     restart: unless-stopped
     # Wait for Redis to be available (basic dependency)
     depends_on:

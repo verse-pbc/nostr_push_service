@@ -10,6 +10,8 @@ pub struct Settings {
     pub redis: RedisSettings,
     pub fcm: FcmSettings,
     pub cleanup: CleanupSettings,
+    #[serde(default = "default_server_settings")]
+    pub server: ServerSettings,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -42,6 +44,22 @@ pub struct CleanupSettings {
     pub enabled: bool,
     pub interval_secs: u64,
     pub token_max_age_days: i64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ServerSettings {
+    #[serde(default = "default_listen_addr")]
+    pub listen_addr: String,
+}
+
+fn default_server_settings() -> ServerSettings {
+    ServerSettings {
+        listen_addr: default_listen_addr(),
+    }
+}
+
+fn default_listen_addr() -> String {
+    "0.0.0.0:8000".to_string()
 }
 
 impl Settings {
