@@ -33,7 +33,7 @@ spec:
                 secretKeyRef:
                   name: plur-push-secret
                   key: app-nip29-relay-private-key
-            - name: PLUR_PUSH__REDIS_URL
+            - name: REDIS_URL
               valueFrom:
                 secretKeyRef:
                   name: plur-push-secret
