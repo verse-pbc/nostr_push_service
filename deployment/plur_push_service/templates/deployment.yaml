@@ -32,7 +32,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: plur-push-secret
-                  key: app_nip29_relay_private_key
+                  key: app-nip29-relay-private-key
             - name: PLUR_PUSH__REDIS__URL
               value: private-nos-social-prod-do-user-5049766-0.m.db.ondigitalocean.com
             - name: PLUR_PUSH__FCM__PROJECT_ID
@@ -62,14 +62,14 @@ spec:
             - containerPort: 8000
               protocol: TCP
           volumeMounts:
-            - name: google_application_credentials
+            - name: google-application-credentials
               mountPath: /app/secrets/serviceAccountKey.json
       volumes:
-        - name: google_application_credentials
+        - name: google-application-credentials
           secret:
             secretName: plur-push-secret
             items:
-              - key: google_application_credentials
+              - key: google-application-credentials
                 path: serviceAccountKey.json
 
 
