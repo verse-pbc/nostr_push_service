@@ -62,9 +62,6 @@ spec:
             - containerPort: 8000
               protocol: TCP
           volumeMounts:
-            - name: plur-push-config
-              mountPath: /app/config.yaml
-              subPath: config
             - name: google_application_credentials
               mountPath: /app/secrets/serviceAccountKey.json
       volumes:
