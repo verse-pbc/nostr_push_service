@@ -166,8 +166,8 @@ jobs:
       - name: Merge main Branch Locally
         shell: bash
         run: |
-          git config --global user.name "$verse-ci"
-          git config --global user.email "$ci@verse.app"
+          git config --global user.name "verse-ci"
+          git config --global user.email "ci@verse.app"
           git checkout release
           git merge -Xtheirs --no-commit origin/main
 
