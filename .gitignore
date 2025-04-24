@@ -1,6 +1,4 @@
 /target
-*.json
-*.yaml
 /secrets/
+/local/
 dump.rdb
-
