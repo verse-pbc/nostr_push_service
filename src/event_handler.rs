@@ -350,7 +350,18 @@ fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
 
     let mut data = std::collections::HashMap::new();
     data.insert("nostrEventId".to_string(), event.id.to_hex());
-    data.insert("kind".to_string(), event.kind.as_u16().to_string());
+
+    // Extract group ID from 'h' tag using find() and content()
+    let group_id = event
+        .tags
+        .find(TagKind::h()) // Find the first raw Tag with kind 'h'
+        .and_then(|tag| tag.content()); // Get the content (value at index 1)
+
+    if let Some(id_str) = group_id {
+        // id_str is Option<&str>, convert to String for insertion
+        data.insert("groupId".to_string(), id_str.to_string());
+    }
+
     // Add other relevant event details here if needed by the client app.
     // These will be sent in the top-level `data` field of the FCM message.
 
@@ -375,4 +386,69 @@ fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
         webpush: None, // Example: Populate with serde_json::Value if needed.
         apns: None,    // Example: Populate with serde_json::Value if needed.
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use nostr_sdk::prelude::{EventBuilder, Keys, Kind, SecretKey, Tag, Timestamp};
+
+    #[tokio::test]
+    async fn test_create_fcm_payload_full() {
+        // Use a fixed secret key for deterministic pubkey and event ID
+        let sk =
+            SecretKey::from_hex("0000000000000000000000000000000000000000000000000000000000000001")
+                .unwrap();
+        let keys = Keys::new(sk);
+
+        let content = "This is a test group message mentioning someone. It has more than 150 characters to ensure that the truncation logic is tested properly. Let's add even more text here to be absolutely sure that it exceeds the limit significantly.";
+
+        let kind = Kind::Custom(11);
+        let fixed_timestamp = Timestamp::from(0); // Use fixed timestamp for deterministic event ID
+        let group_id = "test_group_id"; // Define a group ID for the test
+
+        // Create the ["h", <group_id>] tag correctly
+        let h_tag =
+            Tag::parse(["h".to_string(), group_id.to_string()]).expect("Failed to parse h tag");
+
+        let test_event = EventBuilder::new(kind, content)
+            .tag(h_tag) // Use .tag()
+            .custom_created_at(fixed_timestamp)
+            .sign(&keys)
+            .await
+            .unwrap();
+
+        // Get the actual event ID after signing
+        let actual_event_id = test_event.id.to_hex();
+
+        let payload_result = create_fcm_payload(&test_event);
+        assert!(payload_result.is_ok());
+        let payload = payload_result.unwrap();
+
+        // Serialize the actual payload to JSON string
+        let actual_json = serde_json::to_string_pretty(&payload).unwrap();
+
+        // Define the expected JSON using the group_id and the actual_event_id
+        let expected_json = format!(
+            r#"{{
+            "notification": {{
+              "title": "New message from npub10xlxvlh",
+              "body": "This is a test group message mentioning someone. It has more than 150 characters to ensure that the truncation logic is tested properly. Let's add eve"
+            }},
+            "data": {{
+              "groupId": "{}",
+              "nostrEventId": "{}"
+            }}
+          }}"#,
+            group_id, actual_event_id
+        );
+
+        // Parse both JSON strings back into serde_json::Value for comparison
+        let actual_value: serde_json::Value = serde_json::from_str(&actual_json).unwrap();
+        let expected_value: serde_json::Value = serde_json::from_str(&expected_json).unwrap();
+
+        // Compare the serde_json::Value objects
+        assert_eq!(actual_value, expected_value);
+    }
 }
