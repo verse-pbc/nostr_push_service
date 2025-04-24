@@ -1,7 +1,10 @@
 use crate::{
+    // config::CONFIG,
     error::Result,
+    // fcm::{send_fcm_message, FcmPayload},
     fcm_sender,
     models::{FcmNotification, FcmPayload},
+    nostr::nip29,
     redis_store,
     state::AppState,
 };
@@ -9,10 +12,11 @@ use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 const KIND_REGISTRATION: Kind = Kind::Custom(3079);
 const KIND_DEREGISTRATION: Kind = Kind::Custom(3080);
+const BROADCASTABLE_EVENT_KINDS: [Kind; 2] = [Kind::Custom(11), Kind::Custom(12)];
 // Add other kinds like Kind::TextNote, Kind::Reaction etc.
 const KIND_GROUP_MESSAGE: Kind = Kind::Custom(11); // Example, adjust as needed
 const KIND_GROUP_REPLY: Kind = Kind::Custom(12); // Example, adjust as needed
@@ -193,6 +197,15 @@ async fn handle_group_message(
     };
     debug!(event_id = %event.id, %group_id, "Extracted group ID");
 
+    // Check if this is a broadcast message (has a 'broadcast' tag)
+    let is_broadcast = event.tags.find(TagKind::custom("broadcast")).is_some();
+
+    if is_broadcast {
+        debug!(event_id = %event.id, %group_id, "Broadcast tag detected, will notify all group members");
+        return handle_broadcast_message(state, event, group_id, token).await;
+    }
+
+    // Continue with regular mention-based notification logic
     let mentioned_pubkeys = extract_mentioned_pubkeys(event);
     debug!(event_id = %event.id, mentions = mentioned_pubkeys.len(), "Extracted mentioned pubkeys");
 
@@ -234,105 +247,229 @@ async fn handle_group_message(
             }
         }
 
-        let tokens = tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                info!(event_id = %event.id, target_pubkey = %target_pubkey, "Cancelled while fetching tokens.");
-                return Err(crate::error::ServiceError::Cancelled);
+        if let Err(e) = send_notification_to_user(state, event, &target_pubkey, token.clone()).await
+        {
+            if matches!(e, crate::error::ServiceError::Cancelled) {
+                return Err(e);
             }
-            res = redis_store::get_tokens_for_pubkey(&state.redis_pool, &target_pubkey) => {
-                res?
-            }
-        };
-        trace!(event_id = %event.id, target_pubkey = %target_pubkey, count = tokens.len(), "Found tokens");
-
-        if tokens.is_empty() {
-            trace!(event_id = %event.id, target_pubkey = %target_pubkey, "No registered tokens found, skipping.");
-            continue;
+            error!(event_id = %event.id, target_pubkey = %target_pubkey, error = %e, "Failed to send notification to user");
         }
-
-        trace!(event_id = %event.id, target_pubkey = %target_pubkey, "Creating FCM payload");
-        let payload = create_fcm_payload(event)?;
-
-        trace!(event_id = %event.id, target_pubkey = %target_pubkey, token_count = tokens.len(), "Attempting to send FCM notification");
-
-        let results = tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                info!(event_id = %event.id, target_pubkey = %target_pubkey, "Cancelled during FCM send batch.");
-                return Err(crate::error::ServiceError::Cancelled);
-            }
-            send_result = state.fcm_client.send_batch(&tokens, payload) => {
-                send_result
-            }
-        };
-        trace!(event_id = %event.id, target_pubkey = %target_pubkey, results_count = results.len(), "FCM send completed");
-
-        trace!(event_id = %event.id, target_pubkey = %target_pubkey, "Handling FCM results");
-        let mut tokens_to_remove = Vec::new();
-        let mut success_count = 0;
-        for (fcm_token, result) in results {
-            if token.is_cancelled() {
-                info!(event_id = %event.id, target_pubkey = %target_pubkey, "Cancelled while processing FCM results.");
-                return Err(crate::error::ServiceError::Cancelled);
-            }
-
-            let truncated_token = &fcm_token[..8.min(fcm_token.len())];
-
-            match result {
-                Ok(_) => {
-                    success_count += 1;
-                    trace!(target_pubkey = %target_pubkey, token_prefix = truncated_token, "Successfully sent notification");
-                }
-                Err(fcm_sender::FcmError::TokenNotRegistered) => {
-                    warn!(target_pubkey = %target_pubkey, token_prefix = truncated_token, "Token invalid/unregistered, marking for removal.");
-                    tokens_to_remove.push(fcm_token);
-                }
-                Err(e) => {
-                    error!(
-                        target_pubkey = %target_pubkey, token_prefix = truncated_token, error = %e, error_debug = ?e,
-                        "FCM send failed for token"
-                    );
-                }
-            }
-        }
-        debug!(event_id = %event.id, target_pubkey = %target_pubkey, success = success_count, removed = tokens_to_remove.len(), "FCM send summary");
-
-        if !tokens_to_remove.is_empty() {
-            debug!(event_id = %event.id, target_pubkey = %target_pubkey, count = tokens_to_remove.len(), "Removing invalid tokens globally");
-            for fcm_token_to_remove in tokens_to_remove {
-                if token.is_cancelled() {
-                    info!(event_id = %event.id, target_pubkey = %target_pubkey, "Cancelled while removing invalid tokens.");
-                    return Err(crate::error::ServiceError::Cancelled);
-                }
-                let truncated_token = &fcm_token_to_remove[..8.min(fcm_token_to_remove.len())];
-                if let Err(e) = redis_store::remove_token_globally(
-                    &state.redis_pool,
-                    &target_pubkey,
-                    &fcm_token_to_remove,
-                )
-                .await
-                {
-                    error!(
-                        target_pubkey = %target_pubkey, token_prefix = truncated_token, error = %e,
-                        "Failed to remove invalid token globally"
-                    );
-                } else {
-                    info!(target_pubkey = %target_pubkey, token_prefix = truncated_token, "Removed invalid token globally");
-                }
-            }
-        } else {
-            trace!(event_id = %event.id, target_pubkey = %target_pubkey, "No invalid tokens to remove");
-        }
-        trace!(event_id = %event.id, target_pubkey = %target_pubkey, "Finished processing mention");
     }
 
     debug!(event_id = %event.id, "Finished handling group message/reply");
     Ok(())
 }
 
+/// Handle a broadcast message by sending notifications to all group members.
+#[instrument(skip_all, fields(%group_id))]
+async fn handle_broadcast_message(
+    state: &AppState,
+    event: &Event,
+    group_id: &str,
+    token: CancellationToken,
+) -> Result<()> {
+    info!(event_id = %event.id, %group_id, "Processing broadcast message");
+
+    let kind_allowed = BROADCASTABLE_EVENT_KINDS.contains(&event.kind);
+    if !kind_allowed {
+        warn!(
+            event_id = %event.id,
+            kind = %event.kind,
+            "Event kind is not allowed for broadcast. Skipping.",
+        );
+        return Ok(());
+    }
+    debug!(event_id = %event.id, kind = %event.kind, "Event kind is allowed for broadcast");
+
+    let admin_check_result = state
+        .nip29_client
+        .is_group_admin(group_id, &event.pubkey)
+        .await;
+
+    match admin_check_result {
+        Ok(true) => {
+            debug!(event_id = %event.id, pubkey = %event.pubkey, "Sender IS an admin. Proceeding with broadcast.");
+        }
+        Ok(false) => {
+            warn!(event_id = %event.id, pubkey = %event.pubkey, "Sender is NOT an admin. Rejecting broadcast attempt.");
+            return Ok(()); // Not an error, just reject the unauthorized broadcast
+        }
+        Err(e) => {
+            error!(event_id = %event.id, pubkey = %event.pubkey, error = %e, "Failed to check admin status for broadcast. Skipping.");
+            return Err(e.into());
+        }
+    }
+
+    let members_result = state.nip29_client.get_group_members(group_id).await;
+
+    let members = match members_result {
+        Ok(members) => {
+            info!(event_id = %event.id, %group_id, count = members.len(), "Retrieved group members for broadcast");
+            members
+        }
+        Err(e) => {
+            error!(event_id = %event.id, %group_id, error = %e, "Failed to get group members for broadcast");
+            return Err(e);
+        }
+    };
+
+    info!(
+        event_id = %event.id, %group_id,
+        "Proceeding to send notifications to {} members (excluding sender)",
+        members.len().saturating_sub(1)
+    );
+
+    let sender_pubkey = event.pubkey;
+    let mut success_count = 0;
+    let mut error_count = 0;
+    let member_count = members.len();
+
+    let members_vec: Vec<_> = members.into_iter().collect();
+    for member_pubkey in members_vec {
+        if token.is_cancelled() {
+            info!(event_id = %event.id, %group_id, "Cancelled during broadcast processing");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+
+        if member_pubkey == sender_pubkey {
+            trace!(event_id = %event.id, target_pubkey = %member_pubkey, "Skipping notification to sender");
+            continue;
+        }
+
+        match send_notification_to_user(state, event, &member_pubkey, token.clone()).await {
+            Ok(_) => {
+                success_count += 1;
+            }
+            Err(e) => {
+                if matches!(e, crate::error::ServiceError::Cancelled) {
+                    return Err(e);
+                }
+                error!(event_id = %event.id, target_pubkey = %member_pubkey, error = %e, "Failed to send broadcast notification to user");
+                error_count += 1;
+            }
+        }
+    }
+
+    info!(
+        event_id = %event.id, %group_id,
+        total = member_count - 1, // Subtract 1 to account for sender
+        success = success_count,
+        errors = error_count,
+        "Broadcast notification completed"
+    );
+
+    Ok(())
+}
+
+/// Send a notification to a specific user
+#[instrument(skip_all, fields(target_pubkey = %target_pubkey.to_string()))]
+async fn send_notification_to_user(
+    state: &AppState,
+    event: &Event,
+    target_pubkey: &PublicKey,
+    token: CancellationToken,
+) -> Result<()> {
+    let event_id = event.id;
+
+    let tokens = tokio::select! {
+        biased;
+        _ = token.cancelled() => {
+            info!(event_id = %event_id, target_pubkey = %target_pubkey, "Cancelled while fetching tokens.");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+        res = redis_store::get_tokens_for_pubkey(&state.redis_pool, target_pubkey) => {
+            res?
+        }
+    };
+    trace!(event_id = %event_id, target_pubkey = %target_pubkey, count = tokens.len(), "Found tokens");
+
+    if tokens.is_empty() {
+        trace!(event_id = %event_id, target_pubkey = %target_pubkey, "No registered tokens found, skipping.");
+        return Ok(());
+    }
+
+    trace!(event_id = %event_id, target_pubkey = %target_pubkey, "Creating FCM payload");
+    let payload = create_fcm_payload(event)?;
+
+    trace!(event_id = %event_id, target_pubkey = %target_pubkey, token_count = tokens.len(), "Attempting to send FCM notification");
+
+    let results = tokio::select! {
+        biased;
+        _ = token.cancelled() => {
+            info!(event_id = %event_id, target_pubkey = %target_pubkey, "Cancelled during FCM send batch.");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+        send_result = state.fcm_client.send_batch(&tokens, payload) => {
+            send_result
+        }
+    };
+    trace!(event_id = %event_id, target_pubkey = %target_pubkey, results_count = results.len(), "FCM send completed");
+
+    trace!(event_id = %event_id, target_pubkey = %target_pubkey, "Handling FCM results");
+    let mut tokens_to_remove = Vec::new();
+    let mut success_count = 0;
+    for (fcm_token, result) in results {
+        if token.is_cancelled() {
+            info!(event_id = %event_id, target_pubkey = %target_pubkey, "Cancelled while processing FCM results.");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+
+        let truncated_token = &fcm_token[..8.min(fcm_token.len())];
+
+        match result {
+            Ok(_) => {
+                success_count += 1;
+                trace!(target_pubkey = %target_pubkey, token_prefix = truncated_token, "Successfully sent notification");
+            }
+            Err(fcm_sender::FcmError::TokenNotRegistered) => {
+                warn!(target_pubkey = %target_pubkey, token_prefix = truncated_token, "Token invalid/unregistered, marking for removal.");
+                tokens_to_remove.push(fcm_token);
+            }
+            Err(e) => {
+                error!(
+                    target_pubkey = %target_pubkey, token_prefix = truncated_token, error = %e, error_debug = ?e,
+                    "FCM send failed for token"
+                );
+            }
+        }
+    }
+    debug!(event_id = %event_id, target_pubkey = %target_pubkey, success = success_count, removed = tokens_to_remove.len(), "FCM send summary");
+
+    if !tokens_to_remove.is_empty() {
+        debug!(event_id = %event_id, target_pubkey = %target_pubkey, count = tokens_to_remove.len(), "Removing invalid tokens globally");
+        for fcm_token_to_remove in tokens_to_remove {
+            if token.is_cancelled() {
+                info!(event_id = %event_id, target_pubkey = %target_pubkey, "Cancelled while removing invalid tokens.");
+                return Err(crate::error::ServiceError::Cancelled);
+            }
+            let truncated_token = &fcm_token_to_remove[..8.min(fcm_token_to_remove.len())];
+            if let Err(e) = redis_store::remove_token_globally(
+                &state.redis_pool,
+                target_pubkey,
+                &fcm_token_to_remove,
+            )
+            .await
+            {
+                error!(
+                    target_pubkey = %target_pubkey, token_prefix = truncated_token, error = %e,
+                    "Failed to remove invalid token globally"
+                );
+            } else {
+                info!(target_pubkey = %target_pubkey, token_prefix = truncated_token, "Removed invalid token globally");
+            }
+        }
+    } else {
+        trace!(event_id = %event_id, target_pubkey = %target_pubkey, "No invalid tokens to remove");
+    }
+    trace!(event_id = %event_id, target_pubkey = %target_pubkey, "Finished sending notification");
+
+    Ok(())
+}
+
+// Extracts pubkeys mentioned in any tag starting with "p".
+// Delegates to the helper in the nip29 module.
 fn extract_mentioned_pubkeys(event: &Event) -> Vec<nostr_sdk::PublicKey> {
-    event.tags.public_keys().copied().collect()
+    nip29::extract_pubkeys_from_p_tags(&event.tags).collect()
 }
 
 fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {

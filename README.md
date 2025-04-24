@@ -28,6 +28,40 @@ The system design involves several components:
     *   Receives notification requests from the Plur Push Service.
     *   Delivers push notifications to the registered client devices (iOS, Android, Web).
 
+### Notification Types
+
+The service supports two types of notifications:
+
+1. **Mention-based Notifications**: When a group message mentions specific users (with 'p' tags), notifications are sent only to those mentioned users.
+
+2. **Broadcast Notifications**: When a group message includes a 'broadcast' tag, notifications are sent to all members of the group, regardless of mentions.
+
+### Broadcast Usage Example
+
+To send a broadcast notification to all members of a group, include a 'broadcast' tag in your Nostr event:
+
+```javascript
+// Example using nostr-tools
+const broadcastEvent = {
+  kind: 11, // Must be kind 11 or 12
+  content: 'Important announcement for all group members!',
+  tags: [
+    ['h', 'your-group-id'],
+    ['broadcast'] // This tag triggers broadcast to all members
+  ]
+};
+
+// Only group admins can send broadcast messages
+// Sign and publish using your admin keypair
+const signedEvent = await window.nostr.signEvent(broadcastEvent);
+await relay.publish(signedEvent);
+```
+
+Requirements for broadcast notifications:
+- The sender must be a group admin
+- The event must have kind 11 or 12 (group messages)
+- The event must include a 'broadcast' tag
+
 ## Configuration
 
 The service is configured via environment variables and a `config/settings.yaml` file. Key settings include:

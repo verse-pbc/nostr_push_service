@@ -165,7 +165,7 @@ impl Nip29Client {
     }
 
     /// Retrieves the set of members for a group, using the cache or fetching from the relay.
-    async fn get_group_members(&self, group_id: &str) -> Result<HashSet<PublicKey>> {
+    pub async fn get_group_members(&self, group_id: &str) -> Result<HashSet<PublicKey>> {
         // Try to read from cache using a read lock.
         {
             let cache = self.cache.read().await;
@@ -256,7 +256,10 @@ impl Nip29Client {
                 "Processing latest admin event"
             );
             // Use simple if let Ok pattern, matching the Tag::PublicKey variant
-            let pubkeys = latest_event.tags.public_keys();
+            let pubkeys: HashSet<PublicKey> =
+                extract_pubkeys_from_p_tags(&latest_event.tags).collect();
+
+            info!(%group_id, pubkeys = ?pubkeys, "Found group admins");
             admins.extend(pubkeys);
         } else {
             warn!(%group_id, kind = %GROUP_ADMINS_KIND, "No group admin event found");
@@ -314,6 +317,21 @@ impl Nip29Client {
     pub fn get_cache(&self) -> Arc<RwLock<GroupMembershipCache>> {
         self.cache.clone()
     }
+}
+
+/// Extracts pubkeys from any tag starting with "p", including standard mentions and NIP-29 role tags.
+///
+/// NOTE: We use manual `filter_map` because the built-in `tags.public_keys()` only parses
+/// standard p-tags like `["p", <pubkey>]` and misses NIP-29 tags like `["p", <pubkey>, "Admin"]`.
+pub fn extract_pubkeys_from_p_tags(tags: &Tags) -> impl Iterator<Item = PublicKey> + '_ {
+    tags.iter().filter_map(|t| {
+        if t.kind() == TagKind::p() {
+            t.content()
+                .and_then(|content| PublicKey::from_hex(content).ok())
+        } else {
+            None
+        }
+    })
 }
 
 /// Initializes a NIP-29 client based on application settings.
