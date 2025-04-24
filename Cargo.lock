@@ -2023,6 +2023,7 @@ dependencies = [
  "dotenvy",
  "firebase-messaging-rs",
  "futures",
+ "futures-util",
  "hex",
  "nostr-relay-builder",
  "nostr-sdk",

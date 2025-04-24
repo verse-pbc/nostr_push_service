@@ -113,6 +113,7 @@ pub async fn run(
                                                  "Event handler channel closed during historical processing: {}", e
                                              )))
                                          } else {
+                                            debug!(event_id = %event_id, "Sent historical event to handler");
                                             Ok(())
                                          }
                                      }
@@ -174,6 +175,7 @@ pub async fn run(
                         match notification {
                             nostr_sdk::RelayPoolNotification::Event { event, .. } => {
                                 if event.pubkey == service_pubkey {
+                                    debug!("Skipping event from service account");
                                     continue;
                                 }
                                 let event_id = event.id;
