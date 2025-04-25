@@ -1,7 +1,7 @@
 replicaCount: 1
 image:
   repository: ghcr.io/verse-pbc/plur_push_service
-  tag: 0.0.1-32
+  tag: 0.0.1-34
   pullPolicy: Always
 pdb:
   minAvailable: 1
@@ -13,6 +13,6 @@ service:
   type: ClusterIP
   port: 80
 ingress:
-  enabled: true
+  enabled: false
   className: "nginx"
   host: "plurpush.verse.app"
