@@ -61,11 +61,31 @@ async fn serve_frontend() -> impl IntoResponse {
 }
 
 async fn serve_firebase_config() -> impl IntoResponse {
-    const JS: &str = include_str!("../frontend/firebase-config.js");
+    // Get Firebase config from environment or use empty strings (will fallback to test mode)
+    let config = format!(
+        r#"// Firebase configuration for Web Push
+const firebaseConfig = {{
+    apiKey: "{}",
+    authDomain: "{}",
+    projectId: "{}",
+    storageBucket: "{}",
+    messagingSenderId: "{}",
+    appId: "{}"
+}};"#,
+        std::env::var("FIREBASE_API_KEY").unwrap_or_else(|_| "".to_string()),
+        std::env::var("FIREBASE_AUTH_DOMAIN").unwrap_or_else(|_| "".to_string()),
+        std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| 
+            std::env::var("PLUR_PUSH__FCM__PROJECT_ID").unwrap_or_else(|_| "".to_string())
+        ),
+        std::env::var("FIREBASE_STORAGE_BUCKET").unwrap_or_else(|_| "".to_string()),
+        std::env::var("FIREBASE_MESSAGING_SENDER_ID").unwrap_or_else(|_| "".to_string()),
+        std::env::var("FIREBASE_APP_ID").unwrap_or_else(|_| "".to_string())
+    );
+    
     (
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/javascript")],
-        JS,
+        config,
     )
 }
 

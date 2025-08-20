@@ -3,6 +3,12 @@
 echo "🚀 Starting Push Notification Test Environment"
 echo "============================================"
 
+# Load Firebase config from .env.local if it exists
+if [ -f .env.local ]; then
+    export $(grep -v '^#' .env.local | xargs)
+    echo "✅ Loaded Firebase configuration from .env.local"
+fi
+
 # Check if Redis is running
 if ! redis-cli ping > /dev/null 2>&1; then
     echo "⚠️  Redis is not running. Starting Redis..."

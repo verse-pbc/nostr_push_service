@@ -2,3 +2,6 @@
 /secrets/
 /local/
 dump.rdb
+.env.local
+firebase-service-account.json
+firebase-service-account-*.json
