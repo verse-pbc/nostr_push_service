@@ -14,6 +14,7 @@ const PROCESSED_EVENTS_SET: &str = "processed_nostr_events";
 const PUBKEY_DEVICE_TOKENS_SET_PREFIX: &str = "user_tokens:";
 const STALE_TOKENS_ZSET: &str = "stale_tokens";
 pub const TOKEN_TO_PUBKEY_HASH: &str = "token_to_pubkey";
+const SUBSCRIPTIONS_SET_PREFIX: &str = "subscriptions:";
 
 /// Creates a new Redis connection pool.
 pub async fn create_pool(redis_url: &str, pool_size: u32) -> Result<RedisPool> {
@@ -251,4 +252,88 @@ pub async fn cleanup_stale_tokens(pool: &RedisPool, max_age_seconds: i64) -> Res
             Err(ServiceError::Redis(e))
         }
     }
+}
+
+/// Adds a subscription filter for a user
+pub async fn add_subscription(pool: &RedisPool, pubkey: &PublicKey, filter_json: &str) -> Result<()> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    let subscriptions_key = format!("{}{}", SUBSCRIPTIONS_SET_PREFIX, pubkey.to_hex());
+    
+    redis::cmd("SADD")
+        .arg(&subscriptions_key)
+        .arg(filter_json)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    Ok(())
+}
+
+/// Removes a subscription filter for a user
+pub async fn remove_subscription(pool: &RedisPool, pubkey: &PublicKey, filter_json: &str) -> Result<()> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    let subscriptions_key = format!("{}{}", SUBSCRIPTIONS_SET_PREFIX, pubkey.to_hex());
+    
+    redis::cmd("SREM")
+        .arg(&subscriptions_key)
+        .arg(filter_json)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    Ok(())
+}
+
+/// Gets all subscription filters for a user
+pub async fn get_subscriptions(pool: &RedisPool, pubkey: &PublicKey) -> Result<Vec<String>> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    let subscriptions_key = format!("{}{}", SUBSCRIPTIONS_SET_PREFIX, pubkey.to_hex());
+    
+    let subscriptions: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&subscriptions_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    Ok(subscriptions)
+}
+
+/// Gets all users that have at least one subscription
+pub async fn get_all_users_with_subscriptions(pool: &RedisPool) -> Result<Vec<PublicKey>> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    // Get all subscription keys
+    let pattern = format!("{}*", SUBSCRIPTIONS_SET_PREFIX);
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(&pattern)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    // Extract pubkeys from keys
+    let mut pubkeys = Vec::new();
+    for key in keys {
+        if let Some(hex) = key.strip_prefix(SUBSCRIPTIONS_SET_PREFIX) {
+            if let Ok(pubkey) = PublicKey::from_hex(hex) {
+                pubkeys.push(pubkey);
+            }
+        }
+    }
+    
+    Ok(pubkeys)
 }
