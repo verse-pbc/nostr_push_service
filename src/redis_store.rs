@@ -266,7 +266,7 @@ pub async fn add_subscription(pool: &RedisPool, pubkey: &PublicKey, filter_json:
     redis::cmd("SADD")
         .arg(&subscriptions_key)
         .arg(filter_json)
-        .query_async(&mut *conn)
+        .query_async::<()>(&mut *conn)
         .await
         .map_err(ServiceError::Redis)?;
     
@@ -285,7 +285,7 @@ pub async fn remove_subscription(pool: &RedisPool, pubkey: &PublicKey, filter_js
     redis::cmd("SREM")
         .arg(&subscriptions_key)
         .arg(filter_json)
-        .query_async(&mut *conn)
+        .query_async::<()>(&mut *conn)
         .await
         .map_err(ServiceError::Redis)?;
     
