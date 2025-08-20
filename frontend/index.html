@@ -216,7 +216,7 @@
     
     <script>
         // Global variables
-        let relay = null;
+        const pool = new SimplePool();
         let privateKey = null;
         let publicKey = null;
         let messaging = null;
@@ -362,25 +362,23 @@
 
         // Connect to relay
         async function connectRelay() {
-            if (relay) {
-                relay.close();
-            }
-            
             try {
-                const pool = new SimplePool();
-                relay = pool._conn(relayUrl);
+                // SimplePool manages connections automatically
+                // Test connection by subscribing briefly
+                const testSub = pool.subscribeMany(
+                    [relayUrl],
+                    [{ limit: 1, kinds: [0] }],
+                    {
+                        onevent: () => {},
+                        oneose: () => {
+                            testSub.close();
+                            log(`Connected to relay: ${relayUrl}`, 'success');
+                        }
+                    }
+                );
                 
-                await new Promise((resolve, reject) => {
-                    relay.on('connect', () => {
-                        log(`Connected to relay: ${relayUrl}`, 'success');
-                        resolve();
-                    });
-                    relay.on('error', () => {
-                        log(`Failed to connect to relay`, 'error');
-                        reject(new Error('Connection failed'));
-                    });
-                    relay.connect();
-                });
+                // Give it a moment to establish connection
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 
                 return true;
             } catch (error) {
@@ -412,13 +410,9 @@
 
         // Publish event to relay
         async function publishEvent(event) {
-            if (!relay) {
-                const connected = await connectRelay();
-                if (!connected) return false;
-            }
-
             try {
-                await relay.publish(event);
+                // SimplePool.publish returns a promise that resolves when published
+                await pool.publish([relayUrl], event);
                 log(`Published event kind ${event.kind}: ${event.id.substring(0, 16)}...`, 'success');
                 return true;
             } catch (error) {
