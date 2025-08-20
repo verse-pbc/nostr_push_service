@@ -1,4 +1,9 @@
-use axum::{http::StatusCode, routing::get, Router};
+use axum::{
+    http::StatusCode,
+    response::{Html, IntoResponse},
+    routing::get,
+    Router,
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::signal;
@@ -50,8 +55,35 @@ async fn health_check() -> (StatusCode, &'static str) {
     (StatusCode::OK, "OK")
 }
 
+async fn serve_frontend() -> impl IntoResponse {
+    const HTML: &str = include_str!("../frontend/index.html");
+    Html(HTML)
+}
+
+async fn serve_firebase_config() -> impl IntoResponse {
+    const JS: &str = include_str!("../frontend/firebase-config.js");
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+        JS,
+    )
+}
+
+async fn serve_service_worker() -> impl IntoResponse {
+    const JS: &str = include_str!("../frontend/firebase-messaging-sw.js");
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+        JS,
+    )
+}
+
 async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
-    let app = Router::new().route("/health", get(health_check));
+    let app = Router::new()
+        .route("/", get(serve_frontend))
+        .route("/firebase-config.js", get(serve_firebase_config))
+        .route("/firebase-messaging-sw.js", get(serve_service_worker))
+        .route("/health", get(health_check));
 
     let listen_addr_str = &app_state.settings.server.listen_addr;
     let addr: SocketAddr = match listen_addr_str.parse() {
