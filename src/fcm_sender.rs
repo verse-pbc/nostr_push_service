@@ -6,6 +6,7 @@ use firebase_messaging_rs::{
 };
 // Removed unused import
 // use serde_json;
+use base64;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, time::Duration};
 use thiserror::Error;
@@ -160,6 +161,37 @@ pub struct FcmClient {
 impl FcmClient {
     // Updated new to initialize with the RealFcmClient implementation
     pub fn new(settings: &FcmSettings) -> Result<Self, FcmError> {
+        // Handle credentials from base64 environment variable
+        if let Ok(credentials_base64) = std::env::var("PLUR_PUSH__FCM__CREDENTIALS_BASE64") {
+            if !credentials_base64.is_empty() {
+                // Decode base64 credentials
+                match base64::decode(&credentials_base64) {
+                    Ok(credentials_json) => {
+                        // Write to a temporary file
+                        let temp_dir = std::env::temp_dir();
+                        let creds_path = temp_dir.join("firebase-service-account.json");
+                        
+                        match std::fs::write(&creds_path, credentials_json) {
+                            Ok(_) => {
+                                tracing::info!("Wrote Firebase credentials to temporary file: {:?}", creds_path);
+                                // Set GOOGLE_APPLICATION_CREDENTIALS to the temp file path
+                                std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", creds_path.to_str().unwrap());
+                                tracing::info!("Set GOOGLE_APPLICATION_CREDENTIALS environment variable");
+                            },
+                            Err(e) => {
+                                tracing::error!("Failed to write Firebase credentials to temp file: {}", e);
+                                return Err(FcmError::Initialization(format!("Failed to write credentials: {}", e)));
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to decode base64 Firebase credentials: {}", e);
+                        return Err(FcmError::Initialization(format!("Failed to decode credentials: {}", e)));
+                    }
+                }
+            }
+        }
+        
         // Important: GOOGLE_CLOUD_PROJECT env var handling moved.
         // Ensure it's set appropriately *before* calling this function,
         // likely during application startup/config loading.

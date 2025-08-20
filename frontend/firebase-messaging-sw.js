@@ -11,17 +11,23 @@ firebase.initializeApp(firebaseConfig);
 
 const messaging = firebase.messaging();
 
-// Handle background messages
+// Handle background messages (when app is not in focus or browser is closed)
 messaging.onBackgroundMessage((payload) => {
     console.log('[firebase-messaging-sw.js] Received background message ', payload);
     
-    const notificationTitle = payload.notification?.title || 'New Nostr Event';
+    // Since we're using data-only messages, extract title and body from data
+    const title = payload.data?.title || 'New Nostr Event';
+    const body = payload.data?.body || 'You have a new notification';
+    
+    // Educational: This runs when the tab is not active or browser is minimized
+    const notificationTitle = `[BACKGROUND] ${title}`;
     const notificationOptions = {
-        body: payload.notification?.body || 'You have a new notification',
+        body: `This notification was received while the app was in the background or closed.\n\n${body}`,
         icon: '/icon-192x192.png',
         badge: '/badge-72x72.png',
         data: payload.data,
-        tag: payload.data?.nostrEventId || 'nostr-notification',
+        tag: payload.data?.nostrEventId || 'nostr-background-notification',
+        requireInteraction: true, // Stays until user interacts
     };
 
     self.registration.showNotification(notificationTitle, notificationOptions);

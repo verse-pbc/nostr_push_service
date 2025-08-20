@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Push Notification Test - Plur Push Service</title>
+    <title>Push Notification Tester</title>
     <style>
         * {
             margin: 0;
@@ -24,10 +24,10 @@
         .container {
             background: white;
             border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 40px;
+            padding: 30px;
             max-width: 600px;
             width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
         }
         
         h1 {
@@ -45,7 +45,7 @@
         .section {
             margin-bottom: 30px;
             padding: 20px;
-            background: #f7f7f7;
+            background: #f8f9fa;
             border-radius: 8px;
         }
         
@@ -66,7 +66,7 @@
             font-size: 14px;
         }
         
-        input, select {
+        input {
             width: 100%;
             padding: 10px;
             border: 1px solid #ddd;
@@ -87,13 +87,14 @@
             margin-top: 10px;
         }
         
-        button:hover {
+        button:hover:not(:disabled) {
             background: #5a67d8;
         }
         
         button:disabled {
             background: #ccc;
             cursor: not-allowed;
+            opacity: 0.6;
         }
         
         .status {
@@ -141,91 +142,64 @@
             display: none;
         }
         
-        .key-display {
-            background: #f0f0f0;
-            padding: 10px;
-            border-radius: 4px;
-            word-break: break-all;
-            font-family: monospace;
-            font-size: 12px;
-            margin-top: 10px;
+        .instructions {
+            background: #e8f4fd;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #1565C0;
+        }
+        
+        .instructions strong {
+            display: block;
+            margin-bottom: 5px;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🔔 Push Notification Tester</h1>
-        <p class="subtitle">Test push notification registration with Plur Push Service</p>
+        <p class="subtitle">Simple test interface for Nostr push notifications</p>
         
-        <div class="section">
-            <h2>📡 Relay Configuration</h2>
-            <div class="input-group">
-                <label for="relayUrl">Relay URL:</label>
-                <input type="text" id="relayUrl" value="wss://communities.nos.social" />
-            </div>
+        <div class="instructions">
+            <strong>Quick Start:</strong>
+            1. Click "Register for Push" → 2. Click "Subscribe to Chats" → 3. Send a test message from another browser
         </div>
 
         <div class="section">
-            <h2>🔑 Nostr Keys</h2>
-            <button id="generateKeys">Generate New Keys</button>
-            <button id="useExtension">Use Nostr Extension (NIP-07)</button>
-            <div id="keyInfo" class="hidden">
-                <div class="key-display">
-                    <strong>Public Key:</strong> <span id="pubkeyDisplay"></span>
-                </div>
+            <h2>🔑 Identity</h2>
+            <div class="input-group">
+                <label for="privateKeyInput">Private Key (optional - leave empty to auto-generate):</label>
+                <input type="password" id="privateKeyInput" placeholder="Paste private key hex to use existing identity" />
             </div>
+            <button id="setPrivateKey">Set Private Key</button>
         </div>
 
         <div class="section">
             <h2>📱 Push Notifications</h2>
-            <div class="input-group">
-                <label for="fcmToken">FCM Token:</label>
-                <input type="text" id="fcmToken" placeholder="Click 'Get FCM Token' to retrieve" readonly />
-            </div>
-            <button id="getFcmToken">Get FCM Token</button>
-            <button id="register">Register for Push (Kind 3079)</button>
-            <button id="deregister">Deregister Push (Kind 3080)</button>
-            <div id="notificationStatus" class="status info hidden" style="margin-top: 10px;"></div>
+            <button id="register" disabled>Register for Push</button>
+            <button id="deregister" disabled>Deregister</button>
+            <div id="registrationStatus" class="hidden" style="margin-top: 10px; color: green;">✓ Registered</div>
         </div>
 
         <div class="section">
             <h2>🔔 Subscriptions</h2>
-            <div class="input-group">
-                <label for="filterType">Filter Type:</label>
-                <select id="filterType">
-                    <option value="kind">By Event Kind</option>
-                    <option value="author">By Author</option>
-                    <option value="custom">Custom JSON Filter</option>
-                </select>
-            </div>
-            <div class="input-group" id="kindInput">
-                <label for="kindNumber">Event Kind Number:</label>
-                <input type="number" id="kindNumber" placeholder="e.g., 1 for text notes" value="1" />
-            </div>
-            <div class="input-group hidden" id="authorInput">
-                <label for="authorPubkey">Author Public Key (hex):</label>
-                <input type="text" id="authorPubkey" placeholder="Enter author's public key in hex" />
-            </div>
-            <div class="input-group hidden" id="customInput">
-                <label for="customFilter">Custom Filter JSON:</label>
-                <input type="text" id="customFilter" placeholder='{"kinds":[1],"limit":10}' />
-            </div>
-            <button id="subscribe">Add Subscription (Kind 3081)</button>
-            <button id="unsubscribe">Remove Subscription (Kind 3082)</button>
+            <button id="subscribe" disabled>Subscribe to Chat Messages</button>
+            <button id="unsubscribe" disabled>Unsubscribe</button>
+            <div id="subscriptionStatus" class="hidden" style="margin-top: 10px; color: green;">✓ Subscribed</div>
         </div>
 
         <div class="section">
-            <h2>📬 Test Events</h2>
-            <button id="sendTextNote">Send Text Note (Kind 1)</button>
-            <button id="sendDM">Send DM to Self (Kind 1059)</button>
-            <button id="sendMention">Send Mention to Self</button>
+            <h2>📬 Send Test Message</h2>
+            <button id="sendMessage">Send Chat Message</button>
         </div>
 
         <div id="status" class="status hidden"></div>
         
         <div class="logs">
             <div id="logContent">
-                <div class="log-entry">Ready to connect...</div>
+                <div class="log-entry">Initializing...</div>
             </div>
         </div>
     </div>
@@ -247,19 +221,47 @@
         let publicKey = null;
         let messaging = null;
         let currentFcmToken = null;
-        const { SimplePool, getPublicKey, generatePrivateKey, finalizeEvent, getEventHash } = window.NostrTools;
+        let isRegistered = false;
+        let isSubscribed = false;
+        const relayUrl = 'wss://communities.nos.social';
+        
+        const { SimplePool, getPublicKey, generateSecretKey, finalizeEvent, getEventHash } = window.NostrTools;
+        const generatePrivateKey = generateSecretKey || window.NostrTools.generatePrivateKey;
+
+        // Initialize on page load
+        window.addEventListener('load', async () => {
+            // Auto-generate keys
+            generateNewKeys();
+            
+            // Initialize Firebase
+            const firebaseReady = initializeFirebase();
+            
+            // Connect to relay
+            await connectRelay();
+            
+            // Enable register button if Firebase is ready
+            if (firebaseReady) {
+                document.getElementById('register').disabled = false;
+                document.getElementById('deregister').disabled = false;
+            }
+            
+            // Check for saved FCM token
+            const savedToken = localStorage.getItem('fcmToken');
+            if (savedToken) {
+                currentFcmToken = savedToken;
+                log(`Restored saved FCM token: ${savedToken.substring(0, 20)}...`, 'info');
+            }
+        });
 
         // Initialize Firebase
         function initializeFirebase() {
             try {
                 // Check if config is provided
-                if (!window.firebaseConfig || window.firebaseConfig.apiKey === "YOUR_API_KEY") {
-                    log('Firebase not configured. Using test tokens only.', 'warning');
-                    document.getElementById('getFcmToken').disabled = true;
-                    document.getElementById('getFcmToken').textContent = 'Firebase Not Configured';
-                    document.getElementById('fcmToken').value = 'test-token-123';
-                    document.getElementById('fcmToken').readOnly = false;
-                    return false;
+                if (!window.firebaseConfig || !window.firebaseConfig.apiKey || window.firebaseConfig.apiKey === "") {
+                    log('Firebase not configured. Using test mode.', 'warning');
+                    // Use test token
+                    currentFcmToken = 'test-token-' + Math.random().toString(36).substring(7);
+                    return true;
                 }
 
                 // Initialize Firebase
@@ -268,16 +270,33 @@
 
                 // Handle foreground messages
                 messaging.onMessage((payload) => {
-                    log(`Received foreground message: ${payload.notification?.title}`, 'info');
-                    showStatus(`New notification: ${payload.notification?.title}`, 'info');
+                    // Since we're using data-only messages, extract title and body from data
+                    const title = payload.data?.title || 'New Nostr Event';
+                    const body = payload.data?.body || 'You have a new notification';
                     
-                    // Optionally show notification even when app is in foreground
+                    log(`Received foreground message: ${title}`, 'info');
+                    showStatus(`New notification: ${title}`, 'info');
+                    
+                    // Show OS notification even when app is in foreground
                     if (Notification.permission === 'granted') {
-                        new Notification(payload.notification?.title || 'New Event', {
-                            body: payload.notification?.body || 'You have a new notification',
-                            icon: '/icon-192x192.png',
-                            tag: payload.data?.nostrEventId || 'nostr-notification',
-                        });
+                        const notification = new Notification(
+                            `[FOREGROUND] ${title}`, 
+                            {
+                                body: `This notification was received while the app tab was active/focused. In production apps, you might choose not to show OS notifications for foreground messages.\n\n${body}`,
+                                icon: '/icon-192x192.png',
+                                badge: '/badge-72x72.png',
+                                tag: payload.data?.nostrEventId || 'nostr-foreground-notification',
+                                requireInteraction: false,
+                            }
+                        );
+                        
+                        setTimeout(() => notification.close(), 6000);
+                        
+                        notification.onclick = () => {
+                            window.focus();
+                            notification.close();
+                            log('Foreground notification clicked', 'info');
+                        };
                     }
                 });
 
@@ -285,10 +304,41 @@
                 return true;
             } catch (error) {
                 log(`Firebase initialization failed: ${error.message}`, 'error');
-                document.getElementById('getFcmToken').disabled = true;
                 return false;
             }
         }
+
+        // Generate new keys
+        function generateNewKeys() {
+            privateKey = generatePrivateKey();
+            publicKey = getPublicKey(privateKey);
+            const pubkeyBech32 = window.NostrTools.nip19.npubEncode(publicKey);
+            log(`Generated new keypair. Public key: ${pubkeyBech32.substring(0, 20)}...`, 'success');
+        }
+
+        // Set private key
+        document.getElementById('setPrivateKey').addEventListener('click', () => {
+            const inputKey = document.getElementById('privateKeyInput').value.trim();
+            if (inputKey) {
+                try {
+                    // Validate hex key
+                    if (!/^[0-9a-fA-F]{64}$/.test(inputKey)) {
+                        throw new Error('Invalid private key format');
+                    }
+                    privateKey = inputKey;
+                    publicKey = getPublicKey(privateKey);
+                    const pubkeyBech32 = window.NostrTools.nip19.npubEncode(publicKey);
+                    log(`Private key set. Public key: ${pubkeyBech32.substring(0, 20)}...`, 'success');
+                    showStatus('Private key imported successfully', 'success');
+                    document.getElementById('privateKeyInput').value = '';
+                } catch (error) {
+                    showStatus('Invalid private key', 'error');
+                }
+            } else {
+                generateNewKeys();
+                showStatus('Generated new keypair', 'success');
+            }
+        });
 
         // Logging
         function log(message, type = 'info') {
@@ -312,57 +362,37 @@
 
         // Connect to relay
         async function connectRelay() {
-            const relayUrl = document.getElementById('relayUrl').value;
             if (relay) {
                 relay.close();
             }
             
             try {
                 const pool = new SimplePool();
-                relay = await pool.ensureRelay(relayUrl);
-                log(`Connected to relay: ${relayUrl}`, 'success');
-                showStatus('Connected to relay!', 'success');
+                relay = pool._conn(relayUrl);
+                
+                await new Promise((resolve, reject) => {
+                    relay.on('connect', () => {
+                        log(`Connected to relay: ${relayUrl}`, 'success');
+                        resolve();
+                    });
+                    relay.on('error', () => {
+                        log(`Failed to connect to relay`, 'error');
+                        reject(new Error('Connection failed'));
+                    });
+                    relay.connect();
+                });
+                
                 return true;
             } catch (error) {
-                log(`Failed to connect: ${error.message}`, 'error');
-                showStatus('Failed to connect to relay', 'error');
+                log(`Connection error: ${error.message}`, 'error');
                 return false;
             }
         }
 
-        // Generate keys
-        document.getElementById('generateKeys').addEventListener('click', () => {
-            privateKey = generatePrivateKey();
-            publicKey = getPublicKey(privateKey);
-            document.getElementById('pubkeyDisplay').textContent = publicKey;
-            document.getElementById('keyInfo').classList.remove('hidden');
-            log(`Generated new keypair. Public key: ${publicKey.substring(0, 16)}...`);
-            showStatus('Generated new keys!', 'success');
-        });
-
-        // Use NIP-07 extension
-        document.getElementById('useExtension').addEventListener('click', async () => {
-            if (!window.nostr) {
-                showStatus('No Nostr extension found. Please install Alby or nos2x.', 'error');
-                return;
-            }
-            
-            try {
-                publicKey = await window.nostr.getPublicKey();
-                privateKey = null; // Extension will sign for us
-                document.getElementById('pubkeyDisplay').textContent = publicKey;
-                document.getElementById('keyInfo').classList.remove('hidden');
-                log(`Using extension. Public key: ${publicKey.substring(0, 16)}...`);
-                showStatus('Connected to Nostr extension!', 'success');
-            } catch (error) {
-                showStatus('Failed to get public key from extension', 'error');
-            }
-        });
-
         // Create and sign event
         async function createAndSignEvent(kind, content, tags = []) {
             if (!publicKey) {
-                showStatus('Please generate or load keys first', 'error');
+                showStatus('No keys available', 'error');
                 return null;
             }
 
@@ -374,19 +404,9 @@
                 content: content
             };
 
-            if (privateKey) {
-                // Self-sign
-                event.id = getEventHash(event);
-                event.sig = finalizeEvent(event, privateKey).sig;
-            } else if (window.nostr) {
-                // Use extension
-                const signedEvent = await window.nostr.signEvent(event);
-                return signedEvent;
-            } else {
-                showStatus('No way to sign event', 'error');
-                return null;
-            }
-
+            event.id = getEventHash(event);
+            event.sig = finalizeEvent(event, privateKey).sig;
+            
             return event;
         }
 
@@ -399,7 +419,7 @@
 
             try {
                 await relay.publish(event);
-                log(`Published event kind ${event.kind}: ${event.id.substring(0, 16)}...`);
+                log(`Published event kind ${event.kind}: ${event.id.substring(0, 16)}...`, 'success');
                 return true;
             } catch (error) {
                 log(`Failed to publish: ${error.message}`, 'error');
@@ -408,207 +428,141 @@
         }
 
         // Get FCM Token
-        document.getElementById('getFcmToken').addEventListener('click', async () => {
-            if (!messaging) {
-                showStatus('Firebase not initialized', 'error');
-                return;
+        async function getFCMToken() {
+            if (currentFcmToken && currentFcmToken.startsWith('test-token-')) {
+                return currentFcmToken;
             }
 
             try {
+                // Register service worker
+                const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+                log('Service worker registered', 'success');
+                
                 // Request notification permission
                 const permission = await Notification.requestPermission();
                 if (permission !== 'granted') {
-                    showStatus('Notification permission denied', 'error');
-                    return;
+                    throw new Error('Notification permission denied');
                 }
-
-                // Register service worker
-                const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-                log('Service Worker registered', 'success');
-
+                
                 // Get FCM token
                 const token = await messaging.getToken({
                     serviceWorkerRegistration: registration,
                     vapidKey: window.vapidKey
                 });
-
+                
                 if (token) {
                     currentFcmToken = token;
-                    document.getElementById('fcmToken').value = token;
-                    log(`FCM Token retrieved: ${token.substring(0, 20)}...`, 'success');
-                    showStatus('FCM token retrieved successfully!', 'success');
-                    
-                    // Show notification status
-                    document.getElementById('notificationStatus').textContent = '✅ Ready to receive push notifications';
-                    document.getElementById('notificationStatus').classList.remove('hidden');
+                    localStorage.setItem('fcmToken', token);
+                    log(`FCM Token obtained: ${token.substring(0, 20)}...`, 'success');
+                    return token;
                 } else {
-                    log('No FCM token available', 'error');
-                    showStatus('Failed to get FCM token', 'error');
+                    throw new Error('No FCM token available');
                 }
             } catch (error) {
-                log(`Error getting FCM token: ${error.message}`, 'error');
-                showStatus(`Error: ${error.message}`, 'error');
+                log(`Failed to get FCM token: ${error.message}`, 'error');
+                throw error;
             }
-        });
+        }
 
         // Register for push notifications
         document.getElementById('register').addEventListener('click', async () => {
-            const token = document.getElementById('fcmToken').value;
-            if (!token || token === 'test-token-123') {
-                // For testing, allow test tokens
-                const useTestToken = confirm('No real FCM token. Use test token for development?');
-                if (!useTestToken) return;
-            }
-            
-            const event = await createAndSignEvent(3079, token);
-            if (event && await publishEvent(event)) {
-                showStatus('Registered for push notifications!', 'success');
-                localStorage.setItem('fcmToken', token);
+            try {
+                showStatus('Registering for push notifications...', 'info');
+                
+                // Get FCM token
+                const token = await getFCMToken();
+                
+                // Create registration event (kind 3079)
+                const content = token;
+                const event = await createAndSignEvent(3079, content);
+                
+                if (event && await publishEvent(event)) {
+                    isRegistered = true;
+                    document.getElementById('registrationStatus').classList.remove('hidden');
+                    document.getElementById('subscribe').disabled = false;
+                    document.getElementById('unsubscribe').disabled = false;
+                    showStatus('Successfully registered for push notifications', 'success');
+                    log('Registration complete. You can now subscribe to events.', 'success');
+                } else {
+                    showStatus('Failed to register', 'error');
+                }
+            } catch (error) {
+                showStatus(`Registration failed: ${error.message}`, 'error');
             }
         });
 
         // Deregister
         document.getElementById('deregister').addEventListener('click', async () => {
-            const token = document.getElementById('fcmToken').value;
-            if (!token) {
-                showStatus('No FCM token to deregister', 'error');
+            if (!currentFcmToken) {
+                showStatus('No token to deregister', 'error');
                 return;
             }
             
-            const event = await createAndSignEvent(3080, token);
+            const event = await createAndSignEvent(3080, currentFcmToken);
             if (event && await publishEvent(event)) {
-                showStatus('Deregistered from push notifications!', 'success');
+                isRegistered = false;
+                isSubscribed = false;
+                document.getElementById('registrationStatus').classList.add('hidden');
+                document.getElementById('subscriptionStatus').classList.add('hidden');
+                document.getElementById('subscribe').disabled = true;
+                document.getElementById('unsubscribe').disabled = true;
+                showStatus('Successfully deregistered', 'success');
                 localStorage.removeItem('fcmToken');
-                
-                // Delete token from Firebase
-                if (messaging && currentFcmToken === token) {
-                    try {
-                        await messaging.deleteToken();
-                        log('FCM token deleted from Firebase', 'success');
-                    } catch (error) {
-                        log(`Error deleting FCM token: ${error.message}`, 'error');
-                    }
-                }
-                
-                document.getElementById('fcmToken').value = '';
                 currentFcmToken = null;
-                document.getElementById('notificationStatus').classList.add('hidden');
+            } else {
+                showStatus('Failed to deregister', 'error');
             }
         });
 
-        // Subscribe with filter
+        // Subscribe to chat messages
         document.getElementById('subscribe').addEventListener('click', async () => {
-            const filterType = document.getElementById('filterType').value;
-            let filter = {};
-
-            if (filterType === 'kind') {
-                const kind = parseInt(document.getElementById('kindNumber').value);
-                filter = { kinds: [kind] };
-            } else if (filterType === 'author') {
-                const author = document.getElementById('authorPubkey').value;
-                if (!author) {
-                    showStatus('Please enter an author public key', 'error');
-                    return;
-                }
-                filter = { authors: [author] };
-            } else {
-                try {
-                    filter = JSON.parse(document.getElementById('customFilter').value);
-                } catch (e) {
-                    showStatus('Invalid JSON filter', 'error');
-                    return;
-                }
-            }
-
-            const event = await createAndSignEvent(3081, JSON.stringify(filter));
+            const filter = { kinds: [9] };
+            const filterJson = JSON.stringify(filter);
+            
+            const event = await createAndSignEvent(3081, filterJson);
             if (event && await publishEvent(event)) {
-                showStatus('Added subscription!', 'success');
+                isSubscribed = true;
+                document.getElementById('subscriptionStatus').classList.remove('hidden');
+                showStatus('Subscribed to chat messages (kind 9)', 'success');
+                log(`Subscription added for kind 9 events`, 'success');
+            } else {
+                showStatus('Failed to subscribe', 'error');
             }
         });
 
         // Unsubscribe
         document.getElementById('unsubscribe').addEventListener('click', async () => {
-            const filterType = document.getElementById('filterType').value;
-            let filter = {};
-
-            if (filterType === 'kind') {
-                const kind = parseInt(document.getElementById('kindNumber').value);
-                filter = { kinds: [kind] };
-            } else if (filterType === 'author') {
-                const author = document.getElementById('authorPubkey').value;
-                filter = { authors: [author] };
+            const filter = { kinds: [9] };
+            const filterJson = JSON.stringify(filter);
+            
+            const event = await createAndSignEvent(3082, filterJson);
+            if (event && await publishEvent(event)) {
+                isSubscribed = false;
+                document.getElementById('subscriptionStatus').classList.add('hidden');
+                showStatus('Unsubscribed from chat messages', 'success');
+                log('Subscription removed', 'success');
             } else {
-                filter = JSON.parse(document.getElementById('customFilter').value);
-            }
-
-            const event = await createAndSignEvent(3082, JSON.stringify(filter));
-            if (event && await publishEvent(event)) {
-                showStatus('Removed subscription!', 'success');
+                showStatus('Failed to unsubscribe', 'error');
             }
         });
 
-        // Send test text note
-        document.getElementById('sendTextNote').addEventListener('click', async () => {
-            const event = await createAndSignEvent(1, `Test note at ${new Date().toISOString()}`);
-            if (event && await publishEvent(event)) {
-                showStatus('Sent text note!', 'success');
-            }
-        });
-
-        // Send DM to self
-        document.getElementById('sendDM').addEventListener('click', async () => {
-            if (!publicKey) {
-                showStatus('Please generate keys first', 'error');
+        // Send chat message
+        document.getElementById('sendMessage').addEventListener('click', async () => {
+            const targetPubkey = prompt('Enter the recipient public key (hex format):', publicKey);
+            if (!targetPubkey || !targetPubkey.trim()) {
                 return;
             }
-            const event = await createAndSignEvent(
-                1059, 
-                `Test DM to myself at ${new Date().toISOString()}`,
-                [['p', publicKey]]
-            );
-            if (event && await publishEvent(event)) {
-                showStatus('Sent DM to yourself!', 'success');
-            }
-        });
-
-        // Send mention
-        document.getElementById('sendMention').addEventListener('click', async () => {
-            if (!publicKey) {
-                showStatus('Please generate keys first', 'error');
-                return;
-            }
-            const event = await createAndSignEvent(
-                1, 
-                `Mentioning myself: nostr:${publicKey}`,
-                [['p', publicKey]]
-            );
-            if (event && await publishEvent(event)) {
-                showStatus('Sent mention!', 'success');
-            }
-        });
-
-        // Filter type change handler
-        document.getElementById('filterType').addEventListener('change', (e) => {
-            document.getElementById('kindInput').classList.toggle('hidden', e.target.value !== 'kind');
-            document.getElementById('authorInput').classList.toggle('hidden', e.target.value !== 'author');
-            document.getElementById('customInput').classList.toggle('hidden', e.target.value !== 'custom');
-        });
-
-        // Auto-connect on load
-        window.addEventListener('load', () => {
-            // Initialize Firebase
-            initializeFirebase();
             
-            // Check for saved token
-            const savedToken = localStorage.getItem('fcmToken');
-            if (savedToken) {
-                document.getElementById('fcmToken').value = savedToken;
-                currentFcmToken = savedToken;
-                log(`Restored saved FCM token: ${savedToken.substring(0, 20)}...`);
-            }
+            const tags = [['p', targetPubkey.trim()]];
+            const content = `Test chat message to @${targetPubkey.substring(0, 8)}... sent at ${new Date().toLocaleTimeString()}`;
             
-            // Connect to relay
-            setTimeout(connectRelay, 1000);
+            const event = await createAndSignEvent(9, content, tags);
+            if (event && await publishEvent(event)) {
+                showStatus('Chat message sent!', 'success');
+                log(`Sent kind 9 message with p-tag: ${targetPubkey.substring(0, 16)}...`, 'success');
+            } else {
+                showStatus('Failed to send message', 'error');
+            }
         });
     </script>
 </body>

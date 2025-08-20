@@ -9,6 +9,7 @@ service:
   # Better to load from env var or secrets manager
   # service_private_key_hex: "service_private_key_hex_here"
   listen_kinds: # Kinds to subscribe to
+    - 9    # Deletion events (for testing)
     - 11
     - 12
     - 1059

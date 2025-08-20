@@ -618,8 +618,10 @@ pub async fn handle_custom_subscriptions(
         return Err(crate::error::ServiceError::Cancelled);
     }
     
-    // For now, we'll need to iterate through all users with subscriptions
-    // In the future, this could be optimized with better indexing
+    // Track which users we've already processed to avoid duplicates
+    let mut processed_users = std::collections::HashSet::new();
+    
+    // First, check users with subscriptions
     let users_with_subscriptions = redis_store::get_all_users_with_subscriptions(&state.redis_pool).await?;
     
     for user_pubkey in users_with_subscriptions {
@@ -627,6 +629,8 @@ pub async fn handle_custom_subscriptions(
             info!(event_id = %event.id, "Cancelled during custom subscription processing");
             return Err(crate::error::ServiceError::Cancelled);
         }
+        
+        processed_users.insert(user_pubkey.clone());
         
         // Skip if user has no tokens
         let tokens = redis_store::get_tokens_for_pubkey(&state.redis_pool, &user_pubkey).await?;
@@ -636,20 +640,6 @@ pub async fn handle_custom_subscriptions(
         
         // Get user's subscriptions
         let subscriptions = redis_store::get_subscriptions(&state.redis_pool, &user_pubkey).await?;
-        
-        // If no subscriptions, check default behavior (mentions)
-        if subscriptions.is_empty() {
-            if event_mentions_user(event, &user_pubkey) {
-                trace!(event_id = %event.id, user = %user_pubkey, "User mentioned, sending notification (default behavior)");
-                if let Err(e) = send_notification_to_user(state, event, &user_pubkey, token.clone()).await {
-                    if matches!(e, crate::error::ServiceError::Cancelled) {
-                        return Err(e);
-                    }
-                    error!(event_id = %event.id, user = %user_pubkey, error = %e, "Failed to send notification");
-                }
-            }
-            continue;
-        }
         
         // Check if event matches any subscription filter
         let mut matched = false;
@@ -679,7 +669,40 @@ pub async fn handle_custom_subscriptions(
         }
     }
     
-    debug!(event_id = %event.id, "Finished handling custom subscriptions");
+    // Second, check for mentions - process any mentioned users who have tokens
+    // This ensures users without subscriptions still get notified when mentioned
+    let mentioned_pubkeys = extract_mentioned_pubkeys(event);
+    debug!(event_id = %event.id, mentions = mentioned_pubkeys.len(), "Checking mentioned users");
+    
+    for mentioned_pubkey in mentioned_pubkeys {
+        if token.is_cancelled() {
+            info!(event_id = %event.id, "Cancelled during mention processing");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+        
+        // Skip if we already processed this user via subscriptions
+        if processed_users.contains(&mentioned_pubkey) {
+            continue;
+        }
+        
+        // Check if user has tokens (meaning they've registered for push)
+        let tokens = redis_store::get_tokens_for_pubkey(&state.redis_pool, &mentioned_pubkey).await?;
+        if tokens.is_empty() {
+            trace!(event_id = %event.id, user = %mentioned_pubkey, "Mentioned user has no tokens, skipping");
+            continue;
+        }
+        
+        // Send notification for the mention
+        trace!(event_id = %event.id, user = %mentioned_pubkey, "User mentioned and has tokens, sending notification");
+        if let Err(e) = send_notification_to_user(state, event, &mentioned_pubkey, token.clone()).await {
+            if matches!(e, crate::error::ServiceError::Cancelled) {
+                return Err(e);
+            }
+            error!(event_id = %event.id, user = %mentioned_pubkey, error = %e, "Failed to send notification for mention");
+        }
+    }
+    
+    debug!(event_id = %event.id, "Finished handling custom subscriptions and mentions");
     Ok(())
 }
 
@@ -708,20 +731,31 @@ pub fn is_event_too_old(event: &Event) -> bool {
 }
 
 fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
-    let title = format!(
-        "New message from {}",
-        &event
-            .pubkey
-            .to_bech32()
-            .unwrap()
-            .chars()
-            .take(12)
-            .collect::<String>()
-    );
-    let body = event.content.chars().take(150).collect();
+    let sender = &event
+        .pubkey
+        .to_bech32()
+        .unwrap()
+        .chars()
+        .take(12)
+        .collect::<String>();
+    
+    let title = match event.kind {
+        Kind::Custom(9) => format!("Chat from {}", sender),
+        Kind::Custom(1059) => format!("DM from {}", sender),
+        _ => format!("New message from {}", sender),
+    };
+    
+    let body: String = event.content.chars().take(150).collect();
 
     let mut data = std::collections::HashMap::new();
     data.insert("nostrEventId".to_string(), event.id.to_hex());
+    
+    // Add notification content to data payload for service worker to use
+    data.insert("title".to_string(), title.clone());
+    data.insert("body".to_string(), body.clone());
+    data.insert("senderPubkey".to_string(), event.pubkey.to_hex());
+    data.insert("eventKind".to_string(), event.kind.as_u16().to_string());
+    data.insert("timestamp".to_string(), event.created_at.as_u64().to_string());
 
     // Extract group ID from 'h' tag using find() and content()
     let group_id = event
@@ -740,12 +774,9 @@ fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
     Ok(FcmPayload {
         // Basic cross-platform notification fields.
         // These are mapped to `firebase_messaging_rs::fcm::Notification`.
-        notification: Some(FcmNotification {
-            title: Some(title),
-            body: Some(body),
-            // Note: FcmNotification in models.rs only has title and body.
-            // Other common fields like icon, sound, etc., are not defined there.
-        }),
+        // Send as data-only message so service worker has full control
+        // This allows the client to show different notifications for foreground/background
+        notification: None,  // Changed to None for data-only message
         // Arbitrary key-value data for the client application.
         // This is mapped to the `data` field in `firebase_messaging_rs::fcm::Message::Token`.
         data: Some(data),
@@ -802,18 +833,20 @@ mod tests {
         let actual_json = serde_json::to_string_pretty(&payload).unwrap();
 
         // Define the expected JSON using the group_id and the actual_event_id
+        // Now expects data-only message (no notification field)
         let expected_json = format!(
             r#"{{
-            "notification": {{
-              "title": "New message from npub10xlxvlh",
-              "body": "This is a test group message mentioning someone. It has more than 150 characters to ensure that the truncation logic is tested properly. Let's add eve"
-            }},
             "data": {{
-              "groupId": "{}",
-              "nostrEventId": "{}"
+              "nostrEventId": "{}",
+              "title": "New message from npub10xlxvlh",
+              "body": "This is a test group message mentioning someone. It has more than 150 characters to ensure that the truncation logic is tested properly. Let's add eve",
+              "senderPubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+              "eventKind": "11",
+              "timestamp": "0",
+              "groupId": "{}"
             }}
           }}"#,
-            group_id, actual_event_id
+            actual_event_id, group_id
         );
 
         // Parse both JSON strings back into serde_json::Value for comparison
