@@ -209,12 +209,18 @@
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
     
     <!-- Nostr Tools -->
-    <script src="https://unpkg.com/nostr-tools@2.1.0/lib/nostr.bundle.js"></script>
-    
-    <!-- Firebase Configuration -->
-    <script src="firebase-config.js"></script>
+    <script src="https://unpkg.com/nostr-tools@2.10.2/lib/nostr.bundle.js"></script>
     
     <script>
+        // Check what's available in nostr-tools
+        if (typeof window.NostrTools !== 'undefined') {
+            console.log('NostrTools available:', Object.keys(window.NostrTools));
+        }
+        
+        // Destructure nostr-tools functions
+        const { SimplePool, getPublicKey, generateSecretKey, finalizeEvent, getEventHash } = window.NostrTools || {};
+        const generatePrivateKey = generateSecretKey || window.NostrTools.generatePrivateKey;
+        
         // Global variables
         const pool = new SimplePool();
         let privateKey = null;
@@ -224,9 +230,6 @@
         let isRegistered = false;
         let isSubscribed = false;
         const relayUrl = 'wss://communities.nos.social';
-        
-        const { SimplePool, getPublicKey, generateSecretKey, finalizeEvent, getEventHash } = window.NostrTools;
-        const generatePrivateKey = generateSecretKey || window.NostrTools.generatePrivateKey;
 
         // Initialize on page load
         window.addEventListener('load', async () => {
@@ -234,7 +237,7 @@
             generateNewKeys();
             
             // Initialize Firebase
-            const firebaseReady = initializeFirebase();
+            const firebaseReady = await initializeFirebase();
             
             // Connect to relay
             await connectRelay();
@@ -254,10 +257,14 @@
         });
 
         // Initialize Firebase
-        function initializeFirebase() {
+        async function initializeFirebase() {
             try {
-                // Check if config is provided
-                if (!window.firebaseConfig || !window.firebaseConfig.apiKey || window.firebaseConfig.apiKey === "") {
+                // Fetch config from server endpoint
+                const response = await fetch('/config/fcm.json', { cache: 'no-store' });
+                const config = await response.json();
+                
+                // Check if config is valid
+                if (!config.apiKey || config.apiKey === "") {
                     log('Firebase not configured. Using test mode.', 'warning');
                     // Use test token
                     currentFcmToken = 'test-token-' + Math.random().toString(36).substring(7);
@@ -265,7 +272,7 @@
                 }
 
                 // Initialize Firebase
-                firebase.initializeApp(firebaseConfig);
+                firebase.initializeApp(config);
                 messaging = firebase.messaging();
 
                 // Handle foreground messages

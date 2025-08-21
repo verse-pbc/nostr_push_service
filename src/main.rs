@@ -1,9 +1,10 @@
 use axum::{
     http::StatusCode,
-    response::{Html, IntoResponse},
+    response::{Html, IntoResponse, Json},
     routing::get,
     Router,
 };
+use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::signal;
@@ -121,11 +122,29 @@ async fn serve_service_worker() -> impl IntoResponse {
     )
 }
 
+async fn serve_fcm_config() -> impl IntoResponse {
+    let config = json!({
+        "apiKey": std::env::var("FIREBASE_API_KEY").unwrap_or_default(),
+        "authDomain": std::env::var("FIREBASE_AUTH_DOMAIN").unwrap_or_default(),
+        "projectId": std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| 
+            std::env::var("PLUR_PUSH__FCM__PROJECT_ID").unwrap_or_default()
+        ),
+        "storageBucket": std::env::var("FIREBASE_STORAGE_BUCKET").unwrap_or_default(),
+        "messagingSenderId": std::env::var("FIREBASE_MESSAGING_SENDER_ID").unwrap_or_default(),
+        "appId": std::env::var("FIREBASE_APP_ID").unwrap_or_default(),
+        "measurementId": std::env::var("FIREBASE_MEASUREMENT_ID").unwrap_or_default(),
+        "vapidPublicKey": std::env::var("FIREBASE_VAPID_PUBLIC_KEY").unwrap_or_default()
+    });
+    
+    Json(config)
+}
+
 async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
     let app = Router::new()
         .route("/", get(serve_frontend))
         .route("/firebase-config.js", get(serve_firebase_config))
         .route("/firebase-messaging-sw.js", get(serve_service_worker))
+        .route("/config/fcm.json", get(serve_fcm_config))
         .route("/health", get(health_check));
 
     let listen_addr_str = &app_state.settings.server.listen_addr;
@@ -137,6 +156,7 @@ async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
                 listen_addr_str,
                 e
             );
+            token.cancel(); // Cancel all other tasks
             return;
         }
     };
@@ -147,6 +167,7 @@ async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
         Ok(listener) => listener,
         Err(e) => {
             tracing::error!("Failed to bind HTTP server: {}", e);
+            token.cancel(); // Cancel all other tasks when bind fails
             return;
         }
     };
