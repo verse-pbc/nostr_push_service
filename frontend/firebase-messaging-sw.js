@@ -65,18 +65,23 @@ messaging.onBackgroundMessage((payload) => {
 self.addEventListener('notificationclick', (event) => {
     console.log('[firebase-messaging-sw.js] Notification click received');
     event.notification.close();
+    
+    // Use data.link if available, otherwise use the service worker's scope
+    const targetUrl = event.notification?.data?.link || self.registration.scope;
 
     // Open the app or focus existing window
     event.waitUntil(
-        clients.matchAll({ 
-            type: 'window', 
-            includeUncontrolled: true 
-        }).then((clientList) => {
-            // Try to find and focus an existing window with our app
+        (async () => {
+            const clientList = await clients.matchAll({ 
+                type: 'window', 
+                includeUncontrolled: true 
+            });
+            
+            // Try to find and focus an existing window within our scope
             for (const client of clientList) {
-                if (client.url.includes('localhost:8000') && 'focus' in client) {
-                    client.focus();
-                    // Optionally send a message to the client about the notification
+                if (targetUrl && client.url.startsWith(self.registration.scope)) {
+                    await client.focus();
+                    // Send a message to the client about the notification
                     if (event.notification.data) {
                         client.postMessage({
                             type: 'notification-clicked',
@@ -86,10 +91,11 @@ self.addEventListener('notificationclick', (event) => {
                     return;
                 }
             }
+            
             // If no existing window, open a new one
             if (clients.openWindow) {
-                return clients.openWindow('/');
+                await clients.openWindow(targetUrl);
             }
-        })
+        })()
     );
 });

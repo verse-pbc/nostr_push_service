@@ -268,8 +268,8 @@
     </div>
 
     <!-- Firebase -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-messaging-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
     
     <!-- Nostr Tools -->
     <script src="nostr.bundle.js"></script>
@@ -569,16 +569,27 @@
                     throw new Error('Notification permission denied');
                 }
                 
-                // Register service worker
-                if ('serviceWorker' in navigator) {
-                    const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-                    log('Service worker registered', 'success');
-                    
-                    if (messaging && vapidPublicKey) {
-                        const token = await messaging.getToken({
-                            vapidKey: vapidPublicKey,
-                            serviceWorkerRegistration: registration
-                        });
+                // Check browser support first
+                if (!('serviceWorker' in navigator)) {
+                    log('Service workers not supported', 'error');
+                    return;
+                }
+                
+                if (typeof firebase.messaging?.isSupported === 'function' && !firebase.messaging.isSupported()) {
+                    log('FCM/Web Push not supported in this browser', 'error');
+                    return;
+                }
+                
+                // Register service worker and wait for it to be ready
+                const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+                await navigator.serviceWorker.ready;
+                log('Service worker registered and ready', 'success');
+                
+                if (messaging && vapidPublicKey) {
+                    const token = await messaging.getToken({
+                        vapidKey: vapidPublicKey,
+                        serviceWorkerRegistration: registration
+                    });
                         
                         if (token) {
                             currentFcmToken = token;
@@ -617,7 +628,17 @@
                     await unsubscribeFromChats();
                 }
                 
-                // Send deregistration event
+                // Delete the FCM token to stop push notifications
+                if (messaging && currentFcmToken) {
+                    try {
+                        await messaging.deleteToken();
+                        log('FCM token deleted', 'info');
+                    } catch (e) {
+                        log(`deleteToken failed: ${e.message}`, 'warning');
+                    }
+                }
+                
+                // Send deregistration event with the last known token
                 const event = finalizeEvent({
                     kind: 3080,
                     content: currentFcmToken,
