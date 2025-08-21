@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: my-container
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy | default "Always" }}
           env:
             - name: RUST_LOG
@@ -42,6 +42,37 @@ spec:
               value: plur-623b0
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: /app/secrets/serviceAccountKey.json
+            # Firebase Web Configuration (from ConfigMap)
+            - name: FIREBASE_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_API_KEY
+            - name: FIREBASE_AUTH_DOMAIN
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_AUTH_DOMAIN
+            - name: FIREBASE_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_PROJECT_ID
+            - name: FIREBASE_STORAGE_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_STORAGE_BUCKET
+            - name: FIREBASE_MESSAGING_SENDER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_MESSAGING_SENDER_ID
+            - name: FIREBASE_APP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_APP_ID
           resources:
             requests:
               memory: "256Mi"

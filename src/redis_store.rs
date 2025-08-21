@@ -5,6 +5,7 @@ use nostr_sdk::{EventId, PublicKey, Timestamp};
 use redis::{RedisResult, Value};
 use std::convert::TryInto;
 use std::time::Duration;
+use tracing::warn;
 
 // Type alias for the connection pool
 pub type RedisPool = Pool<RedisConnectionManager>;
@@ -14,6 +15,7 @@ const PROCESSED_EVENTS_SET: &str = "processed_nostr_events";
 const PUBKEY_DEVICE_TOKENS_SET_PREFIX: &str = "user_tokens:";
 const STALE_TOKENS_ZSET: &str = "stale_tokens";
 pub const TOKEN_TO_PUBKEY_HASH: &str = "token_to_pubkey";
+const SUBSCRIPTIONS_SET_PREFIX: &str = "subscriptions:";
 
 /// Creates a new Redis connection pool.
 pub async fn create_pool(redis_url: &str, pool_size: u32) -> Result<RedisPool> {
@@ -123,6 +125,26 @@ pub async fn add_or_update_token(pool: &RedisPool, pubkey: &PublicKey, token: &s
         .await
         .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
 
+    // Check if this token is already associated with a different pubkey
+    let existing_pubkey: Option<String> = redis::cmd("HGET")
+        .arg(TOKEN_TO_PUBKEY_HASH)
+        .arg(token)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    if let Some(existing) = existing_pubkey {
+        if existing != pubkey_hex {
+            warn!(
+                "FCM token registration rejected! Token already registered to pubkey {} but attempted registration by {}",
+                existing, pubkey_hex
+            );
+            return Err(ServiceError::Internal(
+                "Token already registered to a different user".to_string()
+            ));
+        }
+    }
+
     // Use a pipeline to ensure atomicity
     let mut pipe = redis::pipe();
     pipe.atomic()
@@ -138,9 +160,41 @@ pub async fn add_or_update_token(pool: &RedisPool, pubkey: &PublicKey, token: &s
 
 /// Removes a single device token for a pubkey.
 /// Returns true if the token was found and removed.
+/// Only allows removal if the token is registered to the requesting pubkey.
 pub async fn remove_token(pool: &RedisPool, pubkey: &PublicKey, token: &str) -> Result<bool> {
-    let removed = remove_device_tokens(pool, pubkey, &[token.to_string()]).await?;
-    Ok(removed > 0)
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    // First check if this token belongs to the requesting pubkey
+    let token_owner: Option<String> = redis::cmd("HGET")
+        .arg(TOKEN_TO_PUBKEY_HASH)
+        .arg(token)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    let pubkey_hex = pubkey.to_hex();
+    
+    match token_owner {
+        Some(owner) if owner == pubkey_hex => {
+            // Token belongs to this pubkey, proceed with removal
+            let removed = remove_device_tokens(pool, pubkey, &[token.to_string()]).await?;
+            Ok(removed > 0)
+        }
+        Some(owner) => {
+            warn!(
+                "Deregistration rejected! Token owned by {} but deregistration attempted by {}",
+                owner, pubkey_hex
+            );
+            Ok(false) // Return false to indicate token wasn't removed
+        }
+        None => {
+            // Token doesn't exist
+            Ok(false)
+        }
+    }
 }
 
 /// Removes a token globally: from the user's set, the stale token ZSET, and the token->pubkey HASH.
@@ -251,4 +305,88 @@ pub async fn cleanup_stale_tokens(pool: &RedisPool, max_age_seconds: i64) -> Res
             Err(ServiceError::Redis(e))
         }
     }
+}
+
+/// Adds a subscription filter for a user
+pub async fn add_subscription(pool: &RedisPool, pubkey: &PublicKey, filter_json: &str) -> Result<()> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    let subscriptions_key = format!("{}{}", SUBSCRIPTIONS_SET_PREFIX, pubkey.to_hex());
+    
+    redis::cmd("SADD")
+        .arg(&subscriptions_key)
+        .arg(filter_json)
+        .query_async::<()>(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    Ok(())
+}
+
+/// Removes a subscription filter for a user
+pub async fn remove_subscription(pool: &RedisPool, pubkey: &PublicKey, filter_json: &str) -> Result<()> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    let subscriptions_key = format!("{}{}", SUBSCRIPTIONS_SET_PREFIX, pubkey.to_hex());
+    
+    redis::cmd("SREM")
+        .arg(&subscriptions_key)
+        .arg(filter_json)
+        .query_async::<()>(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    Ok(())
+}
+
+/// Gets all subscription filters for a user
+pub async fn get_subscriptions(pool: &RedisPool, pubkey: &PublicKey) -> Result<Vec<String>> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    let subscriptions_key = format!("{}{}", SUBSCRIPTIONS_SET_PREFIX, pubkey.to_hex());
+    
+    let subscriptions: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&subscriptions_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    Ok(subscriptions)
+}
+
+/// Gets all users that have at least one subscription
+pub async fn get_all_users_with_subscriptions(pool: &RedisPool) -> Result<Vec<PublicKey>> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    // Get all subscription keys
+    let pattern = format!("{}*", SUBSCRIPTIONS_SET_PREFIX);
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(&pattern)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    // Extract pubkeys from keys
+    let mut pubkeys = Vec::new();
+    for key in keys {
+        if let Some(hex) = key.strip_prefix(SUBSCRIPTIONS_SET_PREFIX) {
+            if let Ok(pubkey) = PublicKey::from_hex(hex) {
+                pubkeys.push(pubkey);
+            }
+        }
+    }
+    
+    Ok(pubkeys)
 }

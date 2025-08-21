@@ -262,20 +262,21 @@ async fn test_event_handling() -> Result<()> {
         "FCM message sent to wrong token"
     );
 
-    // Basic payload check (adapt based on create_fcm_payload logic)
+    // Basic payload check - now expects data-only message (no notification field)
     assert!(
-        sent_payload.notification.is_some(),
-        "FCM payload notification missing"
+        sent_payload.notification.is_none(),
+        "FCM payload should not have notification field (data-only message)"
     );
-    let notification = sent_payload.notification.as_ref().unwrap();
-    assert!(
-        notification.title.is_some(),
-        "FCM notification title missing"
-    );
-    // Could add checks for title content, body content, data fields etc.
-    // Example: Check if event ID is in data
     assert!(sent_payload.data.is_some(), "FCM payload data missing");
     let data = sent_payload.data.as_ref().unwrap();
+    assert!(
+        data.contains_key("title"),
+        "FCM data should contain title"
+    );
+    assert!(
+        data.contains_key("body"),
+        "FCM data should contain body"
+    );
     assert_eq!(
         data.get("nostrEventId").map(|s| s.as_str()),
         Some(message_event.id.to_hex().as_str())

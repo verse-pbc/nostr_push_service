@@ -72,7 +72,8 @@ pub async fn run(
         .since(since_timestamp);
 
     info!(since = %since_timestamp, "Querying historical events...");
-    let now = Timestamp::now();
+    // Store the timestamp BEFORE we start fetching to avoid missing events
+    let subscription_since = Timestamp::now();
 
     tokio::select! {
         biased;
@@ -142,7 +143,8 @@ pub async fn run(
     }
 
     info!("Subscribing to live events...");
-    let live_filter = Filter::new().kinds(historical_kinds).since(now);
+    // Use the timestamp from before historical fetch to avoid missing events
+    let live_filter = Filter::new().kinds(historical_kinds).since(subscription_since);
 
     tokio::select! {
         biased;

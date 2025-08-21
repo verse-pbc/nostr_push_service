@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Push Notification Tester</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .section h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #555;
+        }
+        
+        .input-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+            margin-right: 10px;
+            margin-top: 10px;
+        }
+        
+        button:hover:not(:disabled) {
+            background: #5a67d8;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-size: 14px;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .logs {
+            background: #1e1e1e;
+            color: #0f0;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .instructions {
+            background: #e8f4fd;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #1565C0;
+        }
+        
+        .instructions strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔔 Push Notification Tester</h1>
+        <p class="subtitle">Simple test interface for Nostr push notifications</p>
+        
+        <div class="instructions">
+            <strong>Quick Start:</strong>
+            1. Click "Register for Push" → 2. Click "Subscribe to Chats" → 3. Send a test message from another browser
+        </div>
+        
+        <div class="warning" style="background: #ffe4b5; padding: 10px; border-radius: 4px; margin: 10px 0; border: 1px solid #ffa500;">
+            <strong>⚠️ Security Notice:</strong><br>
+            • Keys & tokens in localStorage (client-side only, never sent to server)<br>
+            • Token-pubkey pairing is immutable (enforced server-side)<br>
+            • Only original registrant can deregister<br>
+            • For production: Use NIP-07 browser extensions<br>
+            • For production: Use NIP-07 browser extensions (nos2x, Alby) for key management
+        </div>
+
+        <div class="section">
+            <h2>🔑 Identity</h2>
+            <div class="input-group">
+                <label for="privateKeyInput">Private Key (optional - leave empty to auto-generate):</label>
+                <input type="password" id="privateKeyInput" placeholder="Paste private key hex to use existing identity" />
+            </div>
+            <button id="setPrivateKey">Set Private Key</button>
+        </div>
+
+        <div class="section">
+            <h2>📱 Push Notifications</h2>
+            <button id="register" disabled>Register for Push</button>
+            <button id="deregister" disabled>Deregister</button>
+            <div id="registrationStatus" class="hidden" style="margin-top: 10px; color: green;">✓ Registered</div>
+        </div>
+
+        <div class="section">
+            <h2>🔔 Subscriptions</h2>
+            <button id="subscribe" disabled>Subscribe to Chat Messages</button>
+            <button id="unsubscribe" disabled>Unsubscribe</button>
+            <div id="subscriptionStatus" class="hidden" style="margin-top: 10px; color: green;">✓ Subscribed</div>
+        </div>
+
+        <div class="section">
+            <h2>📬 Send Test Message</h2>
+            <input type="text" id="messageText" placeholder="Type a message..." style="width: 70%; padding: 8px; margin-right: 10px;">
+            <button id="sendMessage">Send</button>
+        </div>
+        
+        <!-- Debug section -->
+        <div class="section" style="background: #fff3cd; border: 1px solid #ffc107;">
+            <h3>🔧 Debug Tools (Development Only)</h3>
+            <div class="button-group">
+                <button onclick="window.clearAllData()">Clear All Data & Service Workers</button>
+            </div>
+            <div id="debugOutput" style="margin-top: 10px; font-family: monospace; font-size: 12px; background: white; padding: 10px; border-radius: 4px;">
+                Loading service worker status...
+            </div>
+        </div>
+
+        <div id="status" class="status hidden"></div>
+        
+        <div class="logs">
+            <div id="logContent">
+                <div class="log-entry">Initializing...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
+    
+    <!-- Nostr Tools -->
+    <script src="https://unpkg.com/nostr-tools@2.10.2/lib/nostr.bundle.js"></script>
+    
+    <script>
+        // Check what's available in nostr-tools
+        if (typeof window.NostrTools !== 'undefined') {
+            console.log('NostrTools available:', Object.keys(window.NostrTools));
+        }
+        
+        // Destructure nostr-tools functions
+        const { SimplePool, getPublicKey, generateSecretKey, finalizeEvent, getEventHash } = window.NostrTools || {};
+        const generatePrivateKey = generateSecretKey || window.NostrTools.generatePrivateKey;
+        
+        // Global variables
+        const pool = new SimplePool();
+        let privateKey = null;
+        let publicKey = null;
+        let messaging = null;
+        let currentFcmToken = null;
+        let isRegistered = false;
+        let isSubscribed = false;
+        const relayUrl = 'wss://communities.nos.social';
+
+        // Initialize on page load
+        window.addEventListener('load', async () => {
+            // Clean up duplicate service workers on page load
+            if ('serviceWorker' in navigator) {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                for (let registration of registrations) {
+                    if (registration.scope.includes('firebase-cloud-messaging-push-scope')) {
+                        await registration.unregister();
+                        log('Cleaned up duplicate Firebase service worker on load', 'info');
+                    }
+                }
+                
+                // Listen for messages from service worker (e.g., notification clicks)
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    if (event.data.type === 'notification-clicked') {
+                        log('Notification was clicked!', 'info');
+                        showStatus('Welcome back! Notification clicked.', 'info');
+                        // You can handle the notification data here
+                        if (event.data.data) {
+                            log(`Notification data: ${JSON.stringify(event.data.data)}`, 'info');
+                        }
+                    }
+                });
+            }
+            
+            // Auto-generate keys FIRST before checking tokens
+            generateNewKeys();
+            
+            // NOW check for saved FCM token after keys are generated
+            const savedToken = localStorage.getItem('fcmToken');
+            const savedTokenOwner = localStorage.getItem('fcmTokenOwner');
+            
+            // Only consider registered if token AND owner match current pubkey
+            if (savedToken && savedTokenOwner && savedTokenOwner === publicKey) {
+                currentFcmToken = savedToken;
+                isRegistered = true; // Mark as registered if we have a saved token
+                log(`Restored saved FCM token: ${savedToken.substring(0, 20)}...`, 'info');
+                log(`⚠️ You are registered for push notifications. They will continue even after closing this tab.`, 'warning');
+                
+                // Update button states for already-registered user - but wait for Firebase
+                document.getElementById('registrationStatus').classList.remove('hidden');
+                document.getElementById('subscribe').disabled = false;
+                document.getElementById('unsubscribe').disabled = false;
+                
+                // Show persistent status
+                showStatus('Push notifications active (persists after tab close)', 'info');
+            } else {
+                // Token exists but doesn't match current key, or no token
+                if (savedToken && savedTokenOwner && savedTokenOwner !== publicKey) {
+                    log('FCM token found but belongs to different key, clearing...', 'warning');
+                    localStorage.removeItem('fcmToken');
+                    localStorage.removeItem('fcmTokenOwner');
+                    localStorage.removeItem('isSubscribed');
+                    currentFcmToken = null;
+                }
+                
+                // Not registered - ensure proper initial state
+                document.getElementById('deregister').disabled = true;
+                document.getElementById('subscribe').disabled = true;
+                document.getElementById('unsubscribe').disabled = true;
+            }
+            
+            // Initialize Firebase
+            const firebaseReady = await initializeFirebase();
+            
+            // Connect to relay
+            await connectRelay();
+            
+            // Update service worker status display
+            window.updateServiceWorkerStatus();
+            
+            // Enable/disable buttons based on Firebase and registration state
+            if (firebaseReady) {
+                if (isRegistered) {
+                    document.getElementById('register').disabled = true;
+                    document.getElementById('deregister').disabled = false;
+                } else {
+                    document.getElementById('register').disabled = false;
+                    document.getElementById('deregister').disabled = true;
+                }
+            }
+        });
+
+        // Initialize Firebase
+        async function initializeFirebase() {
+            try {
+                // Fetch config from server endpoint
+                const response = await fetch('/config/fcm.json', { cache: 'no-store' });
+                const config = await response.json();
+                
+                // Check if config is valid
+                if (!config.apiKey || config.apiKey === "") {
+                    log('Firebase not configured. Using test mode.', 'warning');
+                    // Use test token
+                    currentFcmToken = 'test-token-' + Math.random().toString(36).substring(7);
+                    return true;
+                }
+
+                // Initialize Firebase
+                firebase.initializeApp(config);
+                messaging = firebase.messaging();
+
+                // Handle foreground messages
+                messaging.onMessage((payload) => {
+                    // Extract sender pubkey from data
+                    const senderPubkey = payload.data?.senderPubkey;
+                    
+                    // Skip if this is our own message (compare with current pubkey)
+                    if (senderPubkey && publicKey) {
+                        // publicKey is already in hex format
+                        if (senderPubkey === publicKey) {
+                            console.log('Skipping notification for own message');
+                            return; // Don't show notification for own messages
+                        }
+                    }
+                    
+                    // Extract title and body from data field (we're using data-only messages)
+                    const title = payload.data?.title || 'New Nostr Event';
+                    const body = payload.data?.body || 'You have a new notification';
+                    
+                    log(`Received message: ${title} - ${body}`, 'info');
+                    showStatus(`New message: ${body}`, 'info');
+                    
+                    // Show OS notification even when app is in foreground
+                    if (Notification.permission === 'granted') {
+                        const notification = new Notification(
+                            title, 
+                            {
+                                body: body,
+                                icon: '/icon-192x192.png',
+                                badge: '/badge-72x72.png',
+                                tag: payload.data?.nostrEventId || 'nostr-notification',
+                                requireInteraction: false,
+                            }
+                        );
+                        
+                        setTimeout(() => notification.close(), 6000);
+                        
+                        notification.onclick = () => {
+                            window.focus();
+                            notification.close();
+                            log('Notification clicked', 'info');
+                        };
+                    }
+                });
+
+                log('Firebase initialized successfully', 'success');
+                return true;
+            } catch (error) {
+                log(`Firebase initialization failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        // Debug functions
+        window.clearAllData = async function() {
+            try {
+                // Clear localStorage
+                localStorage.clear();
+                log('Cleared localStorage', 'info');
+                
+                // Unregister all service workers
+                if ('serviceWorker' in navigator) {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    for (let registration of registrations) {
+                        await registration.unregister();
+                        log(`Unregistered service worker: ${registration.scope}`, 'info');
+                    }
+                }
+                
+                // Clear all site data if available
+                if ('storage' in navigator && 'estimate' in navigator.storage) {
+                    const estimate = await navigator.storage.estimate();
+                    log(`Storage used before clear: ${Math.round(estimate.usage / 1024 / 1024)}MB`, 'info');
+                }
+                
+                document.getElementById('debugOutput').innerHTML = 'All data cleared! Refresh the page to start fresh.';
+                showStatus('All data and service workers cleared!', 'success');
+                
+                // Refresh after a short delay
+                setTimeout(() => location.reload(), 2000);
+            } catch (error) {
+                console.error('Error clearing data:', error);
+                document.getElementById('debugOutput').innerHTML = `Error: ${error.message}`;
+            }
+        };
+        
+        window.updateServiceWorkerStatus = async function() {
+            try {
+                if ('serviceWorker' in navigator) {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    let output = `<strong>Active Service Workers (${registrations.length}):</strong><br>`;
+                    registrations.forEach(reg => {
+                        output += `• Scope: ${reg.scope}<br>`;
+                        output += `  Script: ${reg.active?.scriptURL || 'none'}<br>`;
+                        output += `  State: ${reg.active?.state || 'none'}<br>`;
+                    });
+                    
+                    // Also show FCM token status
+                    const token = localStorage.getItem('fcmToken');
+                    output += `<br><strong>FCM Token:</strong> ${token ? token.substring(0, 20) + '...' : 'Not registered'}<br>`;
+                    
+                    // Show subscription status
+                    const isSubscribed = localStorage.getItem('isSubscribed') === 'true';
+                    output += `<strong>Subscription Status:</strong> ${isSubscribed ? 'Subscribed to kind 9' : 'Not subscribed'}<br>`;
+                    
+                    document.getElementById('debugOutput').innerHTML = output;
+                } else {
+                    document.getElementById('debugOutput').innerHTML = 'Service Workers not supported';
+                }
+            } catch (error) {
+                document.getElementById('debugOutput').innerHTML = `Error: ${error.message}`;
+            }
+        };
+        
+        // Update status every 2 seconds
+        setInterval(window.updateServiceWorkerStatus, 2000);
+
+        // Generate new keys
+        function generateNewKeys() {
+            // Check localStorage for existing key (persists across sessions)
+            const storedKey = localStorage.getItem('privateKey');
+            if (storedKey) {
+                privateKey = storedKey;
+                publicKey = getPublicKey(privateKey);
+                const pubkeyBech32 = window.NostrTools.nip19.npubEncode(publicKey);
+                log(`Restored keypair. Public key: ${pubkeyBech32.substring(0, 20)}...`, 'info');
+            } else {
+                // Generate a new private key (returns Uint8Array)
+                const privateKeyArray = generatePrivateKey();
+                // Convert to hex string for storage
+                privateKey = Array.from(privateKeyArray, byte => byte.toString(16).padStart(2, '0')).join('');
+                publicKey = getPublicKey(privateKey);
+                localStorage.setItem('privateKey', privateKey);
+                const pubkeyBech32 = window.NostrTools.nip19.npubEncode(publicKey);
+                log(`Generated new keypair. Public key: ${pubkeyBech32.substring(0, 20)}...`, 'success');
+            }
+        }
+
+        // Set private key
+        document.getElementById('setPrivateKey').addEventListener('click', async () => {
+            const inputKeyElement = document.getElementById('privateKeyInput');
+            if (!inputKeyElement) {
+                showStatus('Private key input not found', 'error');
+                return;
+            }
+            const inputKey = inputKeyElement.value.trim();
+            
+            // Check if we have an active FCM registration with the current key
+            const oldPrivateKey = privateKey;
+            const oldPublicKey = publicKey;
+            const hasActiveRegistration = currentFcmToken && isRegistered;
+            
+            if (inputKey) {
+                try {
+                    // Validate hex key
+                    if (!/^[0-9a-fA-F]{64}$/.test(inputKey)) {
+                        throw new Error('Invalid private key format');
+                    }
+                    
+                    // If changing keys and have active registration, deregister first
+                    if (hasActiveRegistration && oldPrivateKey !== inputKey) {
+                        log('Deregistering FCM token from old key before switching...', 'warning');
+                        const deregEvent = await createAndSignEvent(3080, currentFcmToken);
+                        if (deregEvent && await publishEvent(deregEvent)) {
+                            log('Successfully deregistered from old key', 'success');
+                            isRegistered = false;
+                            isSubscribed = false;
+                            document.getElementById('registrationStatus').classList.add('hidden');
+                            document.getElementById('subscriptionStatus').classList.add('hidden');
+                            // Clear the token association
+                            localStorage.removeItem('fcmToken');
+                            localStorage.removeItem('fcmTokenOwner');
+                            localStorage.removeItem('isSubscribed');
+                            currentFcmToken = null;
+                        } else {
+                            log('Warning: Could not deregister old key. Token may be orphaned.', 'warning');
+                        }
+                    }
+                    
+                    // Now set the new key
+                    privateKey = inputKey;
+                    publicKey = getPublicKey(privateKey);
+                    localStorage.setItem('privateKey', privateKey);
+                    const pubkeyBech32 = window.NostrTools.nip19.npubEncode(publicKey);
+                    log(`Private key set. Public key: ${pubkeyBech32.substring(0, 20)}...`, 'success');
+                    showStatus('Private key imported successfully', 'success');
+                    document.getElementById('privateKeyInput').value = '';
+                    
+                    // Update button states for new key
+                    document.getElementById('register').disabled = false;
+                    document.getElementById('deregister').disabled = true;
+                    document.getElementById('subscribe').disabled = true;
+                    document.getElementById('unsubscribe').disabled = true;
+                } catch (error) {
+                    showStatus('Invalid private key', 'error');
+                    // Restore old keys if validation failed
+                    privateKey = oldPrivateKey;
+                    publicKey = oldPublicKey;
+                }
+            } else {
+                // Generate new key - also deregister if needed
+                if (hasActiveRegistration) {
+                    log('Deregistering FCM token before generating new key...', 'warning');
+                    const deregEvent = await createAndSignEvent(3080, currentFcmToken);
+                    if (deregEvent && await publishEvent(deregEvent)) {
+                        log('Successfully deregistered', 'success');
+                        isRegistered = false;
+                        isSubscribed = false;
+                        document.getElementById('registrationStatus').classList.add('hidden');
+                        document.getElementById('subscriptionStatus').classList.add('hidden');
+                        localStorage.removeItem('fcmToken');
+                        localStorage.removeItem('fcmTokenOwner');
+                        localStorage.removeItem('isSubscribed');
+                        currentFcmToken = null;
+                    }
+                }
+                
+                generateNewKeys();
+                showStatus('Generated new keypair', 'success');
+                
+                // Update button states
+                document.getElementById('register').disabled = false;
+                document.getElementById('deregister').disabled = true;
+                document.getElementById('subscribe').disabled = true;
+                document.getElementById('unsubscribe').disabled = true;
+            }
+        });
+
+        // Logging
+        function log(message, type = 'info') {
+            const logContent = document.getElementById('logContent');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logContent.appendChild(entry);
+            logContent.scrollTop = logContent.scrollHeight;
+            console.log(message);
+        }
+
+        function showStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.className = `status ${type}`;
+            status.textContent = message;
+            status.classList.remove('hidden');
+            setTimeout(() => status.classList.add('hidden'), 5000);
+        }
+
+        // Connect to relay
+        async function connectRelay() {
+            try {
+                // SimplePool manages connections automatically
+                // Test connection by subscribing briefly
+                const testSub = pool.subscribeMany(
+                    [relayUrl],
+                    [{ limit: 1, kinds: [0] }],
+                    {
+                        onevent: () => {},
+                        oneose: () => {
+                            testSub.close();
+                            log(`Connected to relay: ${relayUrl}`, 'success');
+                        }
+                    }
+                );
+                
+                // Give it a moment to establish connection
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                return true;
+            } catch (error) {
+                log(`Connection error: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        // Create and sign event
+        async function createAndSignEvent(kind, content, tags = []) {
+            if (!publicKey) {
+                showStatus('No keys available', 'error');
+                return null;
+            }
+
+            const event = {
+                kind: kind,
+                pubkey: publicKey,
+                created_at: Math.floor(Date.now() / 1000),
+                tags: tags,
+                content: content
+            };
+
+            event.id = getEventHash(event);
+            event.sig = finalizeEvent(event, privateKey).sig;
+            
+            return event;
+        }
+
+        // Publish event to relay
+        async function publishEvent(event) {
+            try {
+                // SimplePool.publish returns a promise that resolves when published
+                await pool.publish([relayUrl], event);
+                log(`Published event kind ${event.kind}: ${event.id.substring(0, 16)}...`, 'success');
+                return true;
+            } catch (error) {
+                log(`Failed to publish: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        // Get FCM Token
+        async function getFCMToken() {
+            if (currentFcmToken && currentFcmToken.startsWith('test-token-')) {
+                return currentFcmToken;
+            }
+
+            try {
+                // First, clean up any duplicate service workers
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                let ourRegistration = null;
+                
+                for (let registration of registrations) {
+                    // Keep only the root scope registration, unregister others
+                    if (registration.scope === window.location.origin + '/') {
+                        ourRegistration = registration;
+                        log('Found existing root service worker', 'info');
+                    } else if (registration.scope.includes('firebase-cloud-messaging-push-scope')) {
+                        await registration.unregister();
+                        log('Unregistered duplicate Firebase service worker', 'info');
+                    }
+                }
+                
+                // Register service worker if not already registered
+                if (!ourRegistration) {
+                    ourRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+                    log('Service worker registered', 'success');
+                } else {
+                    log('Using existing service worker registration', 'info');
+                }
+                
+                // Force update check
+                ourRegistration.update();
+                
+                // Request notification permission
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') {
+                    throw new Error('Notification permission denied');
+                }
+                
+                // Get FCM token - passing our registration prevents Firebase from creating its own
+                const token = await messaging.getToken({
+                    serviceWorkerRegistration: ourRegistration,
+                    vapidKey: window.vapidKey
+                });
+                
+                if (token) {
+                    currentFcmToken = token;
+                    localStorage.setItem('fcmToken', token);
+                    localStorage.setItem('fcmTokenOwner', publicKey); // Save the owner's pubkey
+                    log(`FCM Token obtained: ${token.substring(0, 20)}...`, 'success');
+                    return token;
+                } else {
+                    throw new Error('No FCM token available');
+                }
+            } catch (error) {
+                log(`Failed to get FCM token: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // Register for push notifications
+        document.getElementById('register').addEventListener('click', async () => {
+            try {
+                showStatus('Registering for push notifications...', 'info');
+                
+                // Get FCM token
+                const token = await getFCMToken();
+                
+                // Create registration event (kind 3079)
+                const content = token;
+                const event = await createAndSignEvent(3079, content);
+                
+                if (event && await publishEvent(event)) {
+                    isRegistered = true;
+                    document.getElementById('registrationStatus').classList.remove('hidden');
+                    document.getElementById('register').disabled = true; // Disable register after success
+                    document.getElementById('deregister').disabled = false; // Enable deregister
+                    document.getElementById('subscribe').disabled = false;
+                    document.getElementById('unsubscribe').disabled = false;
+                    showStatus('Successfully registered for push notifications', 'success');
+                    log('Registration complete. You can now subscribe to events.', 'success');
+                } else {
+                    showStatus('Failed to register', 'error');
+                }
+            } catch (error) {
+                showStatus(`Registration failed: ${error.message}`, 'error');
+            }
+        });
+
+        // Deregister
+        document.getElementById('deregister').addEventListener('click', async () => {
+            if (!currentFcmToken) {
+                showStatus('No token to deregister', 'error');
+                return;
+            }
+            
+            const event = await createAndSignEvent(3080, currentFcmToken);
+            if (event && await publishEvent(event)) {
+                isRegistered = false;
+                isSubscribed = false;
+                document.getElementById('registrationStatus').classList.add('hidden');
+                document.getElementById('subscriptionStatus').classList.add('hidden');
+                document.getElementById('register').disabled = false; // Re-enable register
+                document.getElementById('deregister').disabled = true; // Disable deregister
+                document.getElementById('subscribe').disabled = true;
+                document.getElementById('unsubscribe').disabled = true;
+                showStatus('Successfully deregistered', 'success');
+                localStorage.removeItem('fcmToken');
+                currentFcmToken = null;
+            } else {
+                showStatus('Failed to deregister', 'error');
+            }
+        });
+
+        // Subscribe to chat messages
+        document.getElementById('subscribe').addEventListener('click', async () => {
+            const filter = { kinds: [9] };
+            const filterJson = JSON.stringify(filter);
+            
+            const event = await createAndSignEvent(3081, filterJson);
+            if (event && await publishEvent(event)) {
+                isSubscribed = true;
+                localStorage.setItem('isSubscribed', 'true'); // Persist subscription status
+                document.getElementById('subscriptionStatus').classList.remove('hidden');
+                document.getElementById('subscribe').disabled = true; // Disable subscribe after success
+                document.getElementById('unsubscribe').disabled = false; // Keep unsubscribe enabled
+                showStatus('Subscribed to chat messages (kind 9)', 'success');
+                log(`Subscription added for kind 9 events`, 'success');
+                window.updateServiceWorkerStatus(); // Update debug display
+            } else {
+                showStatus('Failed to subscribe', 'error');
+            }
+        });
+
+        // Unsubscribe
+        document.getElementById('unsubscribe').addEventListener('click', async () => {
+            const filter = { kinds: [9] };
+            const filterJson = JSON.stringify(filter);
+            
+            const event = await createAndSignEvent(3082, filterJson);
+            if (event && await publishEvent(event)) {
+                isSubscribed = false;
+                document.getElementById('subscriptionStatus').classList.add('hidden');
+                document.getElementById('subscribe').disabled = false; // Re-enable subscribe
+                document.getElementById('unsubscribe').disabled = true; // Disable unsubscribe
+                showStatus('Unsubscribed from chat messages', 'success');
+                log('Subscription removed', 'success');
+            } else {
+                showStatus('Failed to unsubscribe', 'error');
+            }
+        });
+
+        // Send chat message
+        document.getElementById('sendMessage').addEventListener('click', async () => {
+            const messageInput = document.getElementById('messageText');
+            const message = messageInput.value.trim();
+            
+            if (!message) {
+                showStatus('Please enter a message', 'warning');
+                return;
+            }
+            
+            // Send as a broadcast message (kind 9) without specific p-tags
+            // This will trigger notifications for all subscribers to kind 9 events
+            const content = message;
+            const tags = []; // No specific recipient - broadcast to all
+            
+            const event = await createAndSignEvent(9, content, tags);
+            if (event && await publishEvent(event)) {
+                showStatus('Message sent!', 'success');
+                log(`Broadcast message sent: "${message}"`, 'success');
+                messageInput.value = ''; // Clear input after sending
+            } else {
+                showStatus('Failed to send message', 'error');
+            }
+        });
+        
+        // Allow sending with Enter key
+        document.getElementById('messageText').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('sendMessage').click();
+            }
+        });
+    </script>
+</body>
+</html>

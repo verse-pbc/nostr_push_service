@@ -3,12 +3,13 @@ use crate::{
     error::Result,
     // fcm::{send_fcm_message, FcmPayload},
     fcm_sender,
-    models::{FcmNotification, FcmPayload},
+    models::FcmPayload,
     nostr::nip29,
     redis_store,
     state::AppState,
 };
 use nostr_sdk::prelude::*;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
@@ -16,10 +17,15 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 const KIND_REGISTRATION: Kind = Kind::Custom(3079);
 const KIND_DEREGISTRATION: Kind = Kind::Custom(3080);
-const BROADCASTABLE_EVENT_KINDS: [Kind; 2] = [Kind::Custom(11), Kind::Custom(12)];
-// Add other kinds like Kind::TextNote, Kind::Reaction etc.
-const KIND_GROUP_MESSAGE: Kind = Kind::Custom(11); // Example, adjust as needed
-const KIND_GROUP_REPLY: Kind = Kind::Custom(12); // Example, adjust as needed
+const KIND_SUBSCRIPTION_UPSERT: Kind = Kind::Custom(3081);
+const KIND_SUBSCRIPTION_DELETE: Kind = Kind::Custom(3082);
+const KIND_DM: Kind = Kind::Custom(1059); // NIP-17 Private Direct Messages
+const BROADCASTABLE_EVENT_KINDS: [Kind; 1] = [Kind::Custom(9)]; // Only kind 9 is broadcastable
+const KIND_GROUP_MESSAGE: Kind = Kind::Custom(9); // NIP-29 chat message
+const KIND_GROUP_REPLY: Kind = Kind::Custom(10); // NIP-29 chat reply (not broadcastable)
+
+// Replay horizon: ignore events older than this
+const REPLAY_HORIZON_DAYS: u64 = 7;
 
 pub async fn run(
     state: Arc<AppState>,
@@ -47,6 +53,12 @@ pub async fn run(
                 let pubkey = event.pubkey;
 
                 debug!(event_id = %event_id, kind = %event_kind, pubkey = %pubkey, "Event handler received event");
+
+                // Check replay horizon - ignore events that are too old
+                if is_event_too_old(&event) {
+                    debug!(event_id = %event_id, created_at = %event.created_at, "Ignoring old event beyond replay horizon");
+                    continue;
+                }
 
                 tokio::select! {
                     biased;
@@ -77,11 +89,17 @@ pub async fn run(
                     handle_registration(&state, &event).await
                 } else if event_kind == KIND_DEREGISTRATION {
                     handle_deregistration(&state, &event).await
+                } else if event_kind == KIND_SUBSCRIPTION_UPSERT {
+                    handle_subscription_upsert(&state, &event, token.clone()).await
+                } else if event_kind == KIND_SUBSCRIPTION_DELETE {
+                    handle_subscription_delete(&state, &event, token.clone()).await
+                } else if event_kind == KIND_DM {
+                    handle_dm(&state, &event, token.clone()).await
                 } else if event_kind == KIND_GROUP_MESSAGE || event_kind == KIND_GROUP_REPLY {
                     handle_group_message(&state, &event, token.clone()).await
                 } else {
-                    warn!(event_id = %event_id, kind = %event_kind, "Ignoring event with unhandled kind");
-                    Ok(())
+                    // For all other kinds, check user subscriptions
+                    handle_custom_subscriptions(&state, &event, token.clone()).await
                 };
 
                 match handler_result {
@@ -176,6 +194,127 @@ async fn handle_deregistration(state: &AppState, event: &Event) -> Result<()> {
     Ok(())
 }
 
+/// Handle DM events (kind 1059) by notifying all recipients in p-tags
+pub async fn handle_dm(state: &AppState, event: &Event, token: CancellationToken) -> Result<()> {
+    debug!(event_id = %event.id, "Handling DM event");
+
+    if token.is_cancelled() {
+        info!(event_id = %event.id, "Cancelled before handling DM.");
+        return Err(crate::error::ServiceError::Cancelled);
+    }
+
+    // Extract all p-tags (recipients)
+    let recipients: Vec<PublicKey> = event
+        .tags
+        .iter()
+        .filter(|t| t.kind() == TagKind::p())
+        .filter_map(|t| t.content())
+        .filter_map(|content| PublicKey::from_str(content).ok())
+        .collect();
+
+    debug!(event_id = %event.id, recipient_count = recipients.len(), "Found DM recipients");
+
+    if recipients.is_empty() {
+        debug!(event_id = %event.id, "No recipients found in DM p-tags");
+        return Ok(());
+    }
+
+    for recipient_pubkey in recipients {
+        if token.is_cancelled() {
+            info!(event_id = %event.id, "Cancelled during DM recipient processing");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+
+        // Skip if recipient is the sender (self-DM)
+        if recipient_pubkey == event.pubkey {
+            trace!(event_id = %event.id, pubkey = %recipient_pubkey, "Skipping DM notification to sender");
+            continue;
+        }
+
+        trace!(event_id = %event.id, recipient = %recipient_pubkey, "Processing DM for recipient");
+
+        if let Err(e) =
+            send_notification_to_user(state, event, &recipient_pubkey, token.clone()).await
+        {
+            if matches!(e, crate::error::ServiceError::Cancelled) {
+                return Err(e);
+            }
+            error!(event_id = %event.id, recipient = %recipient_pubkey, error = %e, "Failed to send DM notification");
+        }
+    }
+
+    debug!(event_id = %event.id, "Finished handling DM");
+    Ok(())
+}
+
+/// Handle subscription upsert events (kind 3081)
+pub async fn handle_subscription_upsert(
+    state: &AppState,
+    event: &Event,
+    token: CancellationToken,
+) -> Result<()> {
+    debug!(event_id = %event.id, "Handling subscription upsert");
+
+    if token.is_cancelled() {
+        info!(event_id = %event.id, "Cancelled before handling subscription upsert.");
+        return Err(crate::error::ServiceError::Cancelled);
+    }
+
+    // Parse the filter from the event content
+    let filter: Filter = match serde_json::from_str(&event.content) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!(event_id = %event.id, error = %e, "Invalid filter JSON in subscription event");
+            return Ok(()); // Don't fail the whole handler for invalid JSON
+        }
+    };
+
+    // Normalize the filter JSON for consistent storage
+    let filter_json = serde_json::to_string(&filter).map_err(|e| {
+        crate::error::ServiceError::Internal(format!("Failed to serialize filter: {}", e))
+    })?;
+
+    // Store the subscription
+    redis_store::add_subscription(&state.redis_pool, &event.pubkey, &filter_json).await?;
+
+    info!(event_id = %event.id, pubkey = %event.pubkey, "Added/updated subscription");
+    Ok(())
+}
+
+/// Handle subscription delete events (kind 3082)
+pub async fn handle_subscription_delete(
+    state: &AppState,
+    event: &Event,
+    token: CancellationToken,
+) -> Result<()> {
+    debug!(event_id = %event.id, "Handling subscription delete");
+
+    if token.is_cancelled() {
+        info!(event_id = %event.id, "Cancelled before handling subscription delete.");
+        return Err(crate::error::ServiceError::Cancelled);
+    }
+
+    // Parse the filter from the event content
+    let filter: Filter = match serde_json::from_str(&event.content) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!(event_id = %event.id, error = %e, "Invalid filter JSON in subscription delete event");
+            return Ok(()); // Don't fail the whole handler for invalid JSON
+        }
+    };
+
+    // Normalize the filter JSON for consistent removal
+    let filter_json = serde_json::to_string(&filter).map_err(|e| {
+        crate::error::ServiceError::Internal(format!("Failed to serialize filter: {}", e))
+    })?;
+
+    // Remove the subscription
+    redis_store::remove_subscription(&state.redis_pool, &event.pubkey, &filter_json).await?;
+
+    info!(event_id = %event.id, pubkey = %event.pubkey, "Removed subscription");
+    Ok(())
+}
+
 async fn handle_group_message(
     state: &AppState,
     event: &Event,
@@ -230,7 +369,7 @@ async fn handle_group_message(
         // Check if the mentioned user is a member of the group
         match state
             .nip29_client
-            .is_group_member(&group_id, &target_pubkey)
+            .is_group_member(group_id, &target_pubkey)
             .await
         {
             Ok(true) => {
@@ -296,7 +435,7 @@ async fn handle_broadcast_message(
         }
         Err(e) => {
             error!(event_id = %event.id, pubkey = %event.pubkey, error = %e, "Failed to check admin status for broadcast. Skipping.");
-            return Err(e.into());
+            return Err(e);
         }
     }
 
@@ -466,27 +605,173 @@ async fn send_notification_to_user(
     Ok(())
 }
 
+/// Handle events based on user-defined subscription filters
+pub async fn handle_custom_subscriptions(
+    state: &AppState,
+    event: &Event,
+    token: CancellationToken,
+) -> Result<()> {
+    debug!(event_id = %event.id, kind = %event.kind, "Handling event with custom subscriptions");
+
+    if token.is_cancelled() {
+        info!(event_id = %event.id, "Cancelled before handling custom subscriptions.");
+        return Err(crate::error::ServiceError::Cancelled);
+    }
+
+    // Track which users we've already processed to avoid duplicates
+    let mut processed_users = std::collections::HashSet::new();
+
+    // First, check users with subscriptions
+    let users_with_subscriptions =
+        redis_store::get_all_users_with_subscriptions(&state.redis_pool).await?;
+
+    for user_pubkey in users_with_subscriptions {
+        if token.is_cancelled() {
+            info!(event_id = %event.id, "Cancelled during custom subscription processing");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+
+        // Skip if this is the sender (don't notify user of their own messages)
+        if user_pubkey == event.pubkey {
+            debug!(event_id = %event.id, user = %user_pubkey, "Skipping notification for sender");
+            continue;
+        }
+
+        processed_users.insert(user_pubkey);
+
+        // Skip if user has no tokens
+        let tokens = redis_store::get_tokens_for_pubkey(&state.redis_pool, &user_pubkey).await?;
+        if tokens.is_empty() {
+            continue;
+        }
+
+        // Get user's subscriptions
+        let subscriptions = redis_store::get_subscriptions(&state.redis_pool, &user_pubkey).await?;
+
+        // Check if event matches any subscription filter
+        let mut matched = false;
+        for filter_json in subscriptions {
+            let filter: Filter = match serde_json::from_str(&filter_json) {
+                Ok(f) => f,
+                Err(e) => {
+                    warn!(user = %user_pubkey, error = %e, "Invalid filter JSON in storage");
+                    continue;
+                }
+            };
+
+            if filter.match_event(event) {
+                trace!(event_id = %event.id, user = %user_pubkey, "Event matches subscription filter");
+                matched = true;
+                break; // One match is enough
+            }
+        }
+
+        if matched {
+            if let Err(e) =
+                send_notification_to_user(state, event, &user_pubkey, token.clone()).await
+            {
+                if matches!(e, crate::error::ServiceError::Cancelled) {
+                    return Err(e);
+                }
+                error!(event_id = %event.id, user = %user_pubkey, error = %e, "Failed to send notification");
+            }
+        }
+    }
+
+    // Second, check for mentions - process any mentioned users who have tokens
+    // This ensures users without subscriptions still get notified when mentioned
+    let mentioned_pubkeys = extract_mentioned_pubkeys(event);
+    debug!(event_id = %event.id, mentions = mentioned_pubkeys.len(), "Checking mentioned users");
+
+    for mentioned_pubkey in mentioned_pubkeys {
+        if token.is_cancelled() {
+            info!(event_id = %event.id, "Cancelled during mention processing");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+
+        // Skip if we already processed this user via subscriptions
+        if processed_users.contains(&mentioned_pubkey) {
+            continue;
+        }
+
+        // Check if user has tokens (meaning they've registered for push)
+        let tokens =
+            redis_store::get_tokens_for_pubkey(&state.redis_pool, &mentioned_pubkey).await?;
+        if tokens.is_empty() {
+            trace!(event_id = %event.id, user = %mentioned_pubkey, "Mentioned user has no tokens, skipping");
+            continue;
+        }
+
+        // Send notification for the mention
+        trace!(event_id = %event.id, user = %mentioned_pubkey, "User mentioned and has tokens, sending notification");
+        if let Err(e) =
+            send_notification_to_user(state, event, &mentioned_pubkey, token.clone()).await
+        {
+            if matches!(e, crate::error::ServiceError::Cancelled) {
+                return Err(e);
+            }
+            error!(event_id = %event.id, user = %mentioned_pubkey, error = %e, "Failed to send notification for mention");
+        }
+    }
+
+    debug!(event_id = %event.id, "Finished handling custom subscriptions and mentions");
+    Ok(())
+}
+
+/// Check if an event mentions a specific user
+#[allow(dead_code)]
+fn event_mentions_user(event: &Event, user_pubkey: &PublicKey) -> bool {
+    event.tags
+        .iter()
+        .filter(|t| t.kind() == TagKind::p())
+        .filter_map(|t| t.content())
+        .filter_map(|content| PublicKey::from_str(content).ok())
+        .any(|mentioned| mentioned == *user_pubkey)
+}
+
 // Extracts pubkeys mentioned in any tag starting with "p".
 // Delegates to the helper in the nip29 module.
 fn extract_mentioned_pubkeys(event: &Event) -> Vec<nostr_sdk::PublicKey> {
     nip29::extract_pubkeys_from_p_tags(&event.tags).collect()
 }
 
+/// Check if an event is too old based on the replay horizon
+pub fn is_event_too_old(event: &Event) -> bool {
+    use std::time::Duration;
+
+    let horizon = Timestamp::now() - Duration::from_secs(REPLAY_HORIZON_DAYS * 24 * 60 * 60);
+    event.created_at < horizon
+}
+
 fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
-    let title = format!(
-        "New message from {}",
-        &event
-            .pubkey
-            .to_bech32()
-            .unwrap()
-            .chars()
-            .take(12)
-            .collect::<String>()
-    );
-    let body = event.content.chars().take(150).collect();
+    let sender = &event
+        .pubkey
+        .to_bech32()
+        .unwrap()
+        .chars()
+        .take(12)
+        .collect::<String>();
+
+    let title = match event.kind {
+        Kind::Custom(9) => format!("Chat from {}", sender),
+        Kind::Custom(1059) => format!("DM from {}", sender),
+        _ => format!("New message from {}", sender),
+    };
+
+    let body: String = event.content.chars().take(150).collect();
 
     let mut data = std::collections::HashMap::new();
     data.insert("nostrEventId".to_string(), event.id.to_hex());
+
+    // Add notification content to data payload for service worker to use
+    data.insert("title".to_string(), title.clone());
+    data.insert("body".to_string(), body.clone());
+    data.insert("senderPubkey".to_string(), event.pubkey.to_hex());
+    data.insert("eventKind".to_string(), event.kind.as_u16().to_string());
+    data.insert(
+        "timestamp".to_string(),
+        event.created_at.as_u64().to_string(),
+    );
 
     // Extract group ID from 'h' tag using find() and content()
     let group_id = event
@@ -505,12 +790,8 @@ fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
     Ok(FcmPayload {
         // Basic cross-platform notification fields.
         // These are mapped to `firebase_messaging_rs::fcm::Notification`.
-        notification: Some(FcmNotification {
-            title: Some(title),
-            body: Some(body),
-            // Note: FcmNotification in models.rs only has title and body.
-            // Other common fields like icon, sound, etc., are not defined there.
-        }),
+        // Send as data-only for full control over notification display
+        notification: None,
         // Arbitrary key-value data for the client application.
         // This is mapped to the `data` field in `firebase_messaging_rs::fcm::Message::Token`.
         data: Some(data),
@@ -567,18 +848,20 @@ mod tests {
         let actual_json = serde_json::to_string_pretty(&payload).unwrap();
 
         // Define the expected JSON using the group_id and the actual_event_id
+        // Now expects data-only message (no notification field)
         let expected_json = format!(
             r#"{{
-            "notification": {{
-              "title": "New message from npub10xlxvlh",
-              "body": "This is a test group message mentioning someone. It has more than 150 characters to ensure that the truncation logic is tested properly. Let's add eve"
-            }},
             "data": {{
-              "groupId": "{}",
-              "nostrEventId": "{}"
+              "nostrEventId": "{}",
+              "title": "New message from npub10xlxvlh",
+              "body": "This is a test group message mentioning someone. It has more than 150 characters to ensure that the truncation logic is tested properly. Let's add eve",
+              "senderPubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+              "eventKind": "11",
+              "timestamp": "0",
+              "groupId": "{}"
             }}
           }}"#,
-            group_id, actual_event_id
+            actual_event_id, group_id
         );
 
         // Parse both JSON strings back into serde_json::Value for comparison

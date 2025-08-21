@@ -9,10 +9,14 @@ service:
   # Better to load from env var or secrets manager
   # service_private_key_hex: "service_private_key_hex_here"
   listen_kinds: # Kinds to subscribe to
+    - 9    # Deletion events (for testing)
     - 11
     - 12
+    - 1059
     - 3079
     - 3080
+    - 3081
+    - 3082
   process_window_days: 7 # How far back to look for missed events on startup
   processed_event_ttl_secs: 604800 # 7 days TTL for processed event IDs
 
