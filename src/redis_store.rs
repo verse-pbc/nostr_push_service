@@ -390,3 +390,128 @@ pub async fn get_all_users_with_subscriptions(pool: &RedisPool) -> Result<Vec<Pu
     
     Ok(pubkeys)
 }
+
+/// Add a subscription with a specific timestamp
+pub async fn add_subscription_with_timestamp(
+    pool: &RedisPool,
+    pubkey: &PublicKey,
+    filter_json: &str,
+    timestamp: u64,
+) -> Result<()> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    // Store subscription with timestamp in a hash
+    let subscriptions_key = format!("subscriptions_ts:{}", pubkey.to_hex());
+    
+    // Store filter with timestamp as score in sorted set
+    redis::cmd("ZADD")
+        .arg(&subscriptions_key)
+        .arg(timestamp)
+        .arg(filter_json)
+        .query_async::<()>(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    // Also add to regular subscriptions set for compatibility
+    let regular_key = format!("{}{}", SUBSCRIPTIONS_SET_PREFIX, pubkey.to_hex());
+    redis::cmd("SADD")
+        .arg(&regular_key)
+        .arg(filter_json)
+        .query_async::<()>(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    Ok(())
+}
+
+/// Get subscription timestamp for a filter
+pub async fn get_subscription_timestamp(
+    pool: &RedisPool,
+    pubkey: &PublicKey,
+    filter_json: &str,
+) -> Result<Option<u64>> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    let subscriptions_key = format!("subscriptions_ts:{}", pubkey.to_hex());
+    
+    let score: Option<f64> = redis::cmd("ZSCORE")
+        .arg(&subscriptions_key)
+        .arg(filter_json)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    Ok(score.map(|s| s as u64))
+}
+
+/// Get all subscriptions for a user with their timestamps
+/// Falls back to regular subscriptions with timestamp 0 if no timestamped subscriptions exist
+pub async fn get_subscriptions_with_timestamps(
+    pool: &RedisPool,
+    pubkey: &PublicKey,
+) -> Result<Vec<(String, u64)>> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    let subscriptions_ts_key = format!("subscriptions_ts:{}", pubkey.to_hex());
+    
+    // Try to get timestamped subscriptions first
+    let results: Vec<(String, f64)> = redis::cmd("ZRANGE")
+        .arg(&subscriptions_ts_key)
+        .arg(0)
+        .arg(-1)
+        .arg("WITHSCORES")
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    if !results.is_empty() {
+        // Convert scores to u64
+        let subscriptions = results
+            .into_iter()
+            .map(|(filter, score)| (filter, score as u64))
+            .collect();
+        return Ok(subscriptions);
+    }
+    
+    // Fallback to regular subscriptions (for backward compatibility)
+    let regular_key = format!("{}{}", SUBSCRIPTIONS_SET_PREFIX, pubkey.to_hex());
+    let regular_subs: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&regular_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    // Return with timestamp 0 (will match all events)
+    let subscriptions = regular_subs
+        .into_iter()
+        .map(|filter| (filter, 0u64))
+        .collect();
+    
+    Ok(subscriptions)
+}
+
+/// Get the TTL for the processed events set
+pub async fn get_event_ttl(pool: &RedisPool, _event_id: &EventId) -> Result<i64> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    // The TTL is on the entire set, not individual events
+    let ttl: i64 = redis::cmd("TTL")
+        .arg(PROCESSED_EVENTS_SET)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    Ok(ttl)
+}
