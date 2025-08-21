@@ -124,9 +124,10 @@ async fn test_multiple_subscriptions() {
     let user_keys = Keys::generate();
     
     // Add multiple different subscriptions
+    let author_keys = Keys::generate(); // Use a different key for author filter
     let filter1 = Filter::new().kind(Kind::TextNote);
     let filter2 = Filter::new().kind(Kind::Reaction);
-    let filter3 = Filter::new().author(user_keys.public_key());
+    let filter3 = Filter::new().author(author_keys.public_key()); // Use different author
     
     let token = CancellationToken::new();
     
@@ -147,7 +148,15 @@ async fn test_multiple_subscriptions() {
         .await
         .unwrap();
     
-    assert_eq!(subscriptions.len(), 3);
+    // Debug output if assertion fails
+    if subscriptions.len() != 3 {
+        eprintln!("Expected 3 subscriptions, got {}. Subscriptions:", subscriptions.len());
+        for (i, sub) in subscriptions.iter().enumerate() {
+            eprintln!("  {}: {}", i, sub);
+        }
+    }
+    
+    assert_eq!(subscriptions.len(), 3, "Expected 3 different subscriptions");
 }
 
 #[tokio::test]
