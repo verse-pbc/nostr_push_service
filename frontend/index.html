@@ -340,7 +340,28 @@
             try {
                 // Fetch config from server endpoint
                 const response = await fetch('/config/fcm.json', { cache: 'no-store' });
-                const config = await response.json();
+                
+                // Log response details for debugging
+                log(`FCM config response status: ${response.status}`, 'info');
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    log(`FCM config error response: ${errorText}`, 'error');
+                    throw new Error(`Failed to fetch FCM config: ${response.status} ${response.statusText}`);
+                }
+                
+                const responseText = await response.text();
+                log(`FCM config raw response (first 200 chars): ${responseText.substring(0, 200)}`, 'info');
+                
+                // Try to parse JSON
+                let config;
+                try {
+                    config = JSON.parse(responseText);
+                } catch (parseError) {
+                    log(`Failed to parse FCM config JSON: ${parseError.message}`, 'error');
+                    log(`Response was: ${responseText}`, 'error');
+                    throw new Error(`Invalid JSON in FCM config: ${parseError.message}`);
+                }
                 
                 // Check if config is valid
                 if (!config.apiKey || config.apiKey === "") {
