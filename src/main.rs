@@ -167,19 +167,22 @@ async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
         Ok(listener) => listener,
         Err(e) => {
             tracing::error!("Failed to bind HTTP server: {}", e);
+            tracing::error!("Cancelling token to trigger shutdown...");
             token.cancel(); // Cancel all other tasks when bind fails
             return;
         }
     };
 
+    let shutdown_token = token.clone();
     if let Err(e) = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            token.cancelled().await;
+            shutdown_token.cancelled().await;
             tracing::info!("HTTP server shutting down.");
         })
         .await
     {
         tracing::error!("HTTP server error: {}", e);
+        token.cancel(); // Cancel all other tasks on server error
     }
 }
 
@@ -244,9 +247,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     tracing::info!("HTTP server started");
 
-    match signal::ctrl_c().await {
-        Ok(()) => tracing::info!("Received shutdown signal"),
-        Err(err) => tracing::error!("Failed to listen for shutdown signal: {}", err),
+    // Create a future for token cancellation that we can poll
+    let token_cancelled = token.child_token();
+    
+    // Wait for either Ctrl+C or cancellation token (from HTTP server failure)
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            tracing::info!("Received shutdown signal");
+        }
+        _ = token_cancelled.cancelled() => {
+            tracing::info!("Shutdown triggered by task failure");
+        }
     }
 
     tracing::info!("Shutting down services...");
