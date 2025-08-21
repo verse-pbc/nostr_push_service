@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nostr Push Dev Tool</title>
+    
+    <!-- PWA manifest and iOS support -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Plur Push">
+    <link rel="apple-touch-icon" href="/icon-192x192.png">
     <style>
         * {
             margin: 0;
@@ -295,12 +302,19 @@
             log('Initializing...', 'info');
             
             // Check for push notification support
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+            const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+            
             if (!('Notification' in window)) {
-                log('⚠️ Push notifications not supported on this browser/device', 'warning');
-                log('Safari on iOS does not support Web Push API', 'info');
+                log('⚠️ Push notifications not supported', 'warning');
                 document.getElementById('register').disabled = true;
                 document.getElementById('pushStatus').textContent = 'Not Supported';
                 document.getElementById('pushStatus').className = 'status-badge error';
+            } else if (isIOS && !isStandalone) {
+                log('📱 iOS Safari: Add to Home Screen for push notifications', 'info');
+                log('Tap Share → Add to Home Screen, then open from home screen', 'info');
+                document.getElementById('pushStatus').textContent = 'Add to Home Screen';
+                document.getElementById('pushStatus').className = 'status-badge warning';
             }
             
             // Initialize nostr-tools functions
@@ -571,12 +585,19 @@
 
         async function registerForPush() {
             try {
-                // Check for Notification API support first (Safari iOS doesn't support it)
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+                
+                // Check for Notification API support
                 if (!('Notification' in window)) {
-                    log('Push notifications not supported on this device (Safari on iOS does not support Web Push)', 'error');
-                    document.getElementById('register').disabled = true;
-                    document.getElementById('pushStatus').textContent = 'Not Supported';
-                    document.getElementById('pushStatus').className = 'status-badge error';
+                    log('Push notifications not supported', 'error');
+                    return;
+                }
+                
+                // iOS Safari requires PWA mode
+                if (isIOS && !isStandalone) {
+                    log('Please add to Home Screen first for push notifications on iOS', 'error');
+                    log('Tap Share → Add to Home Screen, then open from home screen', 'info');
                     return;
                 }
                 
