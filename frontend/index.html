@@ -294,6 +294,15 @@
         window.addEventListener('load', async () => {
             log('Initializing...', 'info');
             
+            // Check for push notification support
+            if (!('Notification' in window)) {
+                log('⚠️ Push notifications not supported on this browser/device', 'warning');
+                log('Safari on iOS does not support Web Push API', 'info');
+                document.getElementById('register').disabled = true;
+                document.getElementById('pushStatus').textContent = 'Not Supported';
+                document.getElementById('pushStatus').className = 'status-badge error';
+            }
+            
             // Initialize nostr-tools functions
             if (window.NostrTools) {
                 const tools = window.NostrTools;
@@ -562,14 +571,16 @@
 
         async function registerForPush() {
             try {
-                log('Requesting notification permission...', 'info');
-                const permission = await Notification.requestPermission();
-                
-                if (permission !== 'granted') {
-                    throw new Error('Notification permission denied');
+                // Check for Notification API support first (Safari iOS doesn't support it)
+                if (!('Notification' in window)) {
+                    log('Push notifications not supported on this device (Safari on iOS does not support Web Push)', 'error');
+                    document.getElementById('register').disabled = true;
+                    document.getElementById('pushStatus').textContent = 'Not Supported';
+                    document.getElementById('pushStatus').className = 'status-badge error';
+                    return;
                 }
                 
-                // Check browser support first
+                // Check browser support
                 if (!('serviceWorker' in navigator)) {
                     log('Service workers not supported', 'error');
                     return;
@@ -578,6 +589,13 @@
                 if (typeof firebase.messaging?.isSupported === 'function' && !firebase.messaging.isSupported()) {
                     log('FCM/Web Push not supported in this browser', 'error');
                     return;
+                }
+                
+                log('Requesting notification permission...', 'info');
+                const permission = await Notification.requestPermission();
+                
+                if (permission !== 'granted') {
+                    throw new Error('Notification permission denied');
                 }
                 
                 // Register service worker and wait for it to be ready
