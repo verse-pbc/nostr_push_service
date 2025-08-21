@@ -1,5 +1,6 @@
 // Firebase Messaging Service Worker
 // This file must be at the root of your domain for Web Push to work
+// Version: 1.0.1
 
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
@@ -11,41 +12,74 @@ firebase.initializeApp(firebaseConfig);
 
 const messaging = firebase.messaging();
 
-// Handle background messages (when app is not in focus or browser is closed)
-messaging.onBackgroundMessage((payload) => {
-    console.log('[firebase-messaging-sw.js] Received background message ', payload);
-    
-    // Since we're using data-only messages, extract title and body from data
-    const title = payload.data?.title || 'New Nostr Event';
-    const body = payload.data?.body || 'You have a new notification';
-    
-    // Educational: This runs when the tab is not active or browser is minimized
-    const notificationTitle = `[BACKGROUND] ${title}`;
-    const notificationOptions = {
-        body: `This notification was received while the app was in the background or closed.\n\n${body}`,
-        icon: '/icon-192x192.png',
-        badge: '/badge-72x72.png',
-        data: payload.data,
-        tag: payload.data?.nostrEventId || 'nostr-background-notification',
-        requireInteraction: true, // Stays until user interacts
-    };
+// Service worker lifecycle management
+// Skip waiting and claim clients immediately when updating
+self.addEventListener('install', (event) => {
+    console.log('[Service Worker] Installing new version...');
+    self.skipWaiting(); // Replace old service worker immediately
+});
 
-    self.registration.showNotification(notificationTitle, notificationOptions);
+self.addEventListener('activate', (event) => {
+    console.log('[Service Worker] Activating new version...');
+    event.waitUntil(clients.claim()); // Take control of all clients immediately
+});
+
+// Handle background messages - this is the proper FCM way for data-only messages
+messaging.onBackgroundMessage((payload) => {
+    console.log('[firebase-messaging-sw.js] Received background message', payload);
+    console.log('[firebase-messaging-sw.js] Payload data:', payload.data);
+    console.log('[firebase-messaging-sw.js] Title from data:', payload.data?.title);
+    console.log('[firebase-messaging-sw.js] Body from data:', payload.data?.body);
+    
+    // We're using data-only messages
+    if (payload.data && payload.data.title && payload.data.body) {
+        const title = payload.data.title;
+        const body = payload.data.body;
+        
+        console.log('[firebase-messaging-sw.js] Creating notification with:', { title, body });
+        
+        const notificationOptions = {
+            body: body,
+            icon: '/icon-192x192.png',
+            badge: '/badge-72x72.png',
+            data: payload.data,
+            tag: payload.data.nostrEventId || `nostr-${Date.now()}`,
+            requireInteraction: false,
+        };
+        
+        // This is the proper way - return the promise
+        return self.registration.showNotification(title, notificationOptions);
+    } else {
+        console.error('[firebase-messaging-sw.js] Missing required data fields');
+    }
 });
 
 // Handle notification click
 self.addEventListener('notificationclick', (event) => {
-    console.log('[firebase-messaging-sw.js] Notification click Received.');
+    console.log('[firebase-messaging-sw.js] Notification click received');
     event.notification.close();
 
     // Open the app or focus existing window
     event.waitUntil(
-        clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+        clients.matchAll({ 
+            type: 'window', 
+            includeUncontrolled: true 
+        }).then((clientList) => {
+            // Try to find and focus an existing window with our app
             for (const client of clientList) {
-                if (client.url === '/' && 'focus' in client) {
-                    return client.focus();
+                if (client.url.includes('localhost:8000') && 'focus' in client) {
+                    client.focus();
+                    // Optionally send a message to the client about the notification
+                    if (event.notification.data) {
+                        client.postMessage({
+                            type: 'notification-clicked',
+                            data: event.notification.data
+                        });
+                    }
+                    return;
                 }
             }
+            // If no existing window, open a new one
             if (clients.openWindow) {
                 return clients.openWindow('/');
             }

@@ -630,6 +630,12 @@ pub async fn handle_custom_subscriptions(
             return Err(crate::error::ServiceError::Cancelled);
         }
         
+        // Skip if this is the sender (don't notify user of their own messages)
+        if user_pubkey == event.pubkey {
+            debug!(event_id = %event.id, user = %user_pubkey, "Skipping notification for sender");
+            continue;
+        }
+        
         processed_users.insert(user_pubkey.clone());
         
         // Skip if user has no tokens
@@ -774,9 +780,8 @@ fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
     Ok(FcmPayload {
         // Basic cross-platform notification fields.
         // These are mapped to `firebase_messaging_rs::fcm::Notification`.
-        // Send as data-only message so service worker has full control
-        // This allows the client to show different notifications for foreground/background
-        notification: None,  // Changed to None for data-only message
+        // Send as data-only for full control over notification display
+        notification: None,
         // Arbitrary key-value data for the client application.
         // This is mapped to the `data` field in `firebase_messaging_rs::fcm::Message::Token`.
         data: Some(data),

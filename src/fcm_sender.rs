@@ -108,17 +108,17 @@ impl FcmSend for RealFcmClient {
         token: &str,
         payload: FcmPayload,
     ) -> std::result::Result<(), FcmError> {
-        let notif = payload.notification.ok_or_else(|| {
-            FcmError::InvalidRequest("Missing notification field in FcmPayload".to_string())
-        })?; // Handle potential None case
+        // Support both notification+data and data-only messages
+        let notification = payload.notification.map(|notif| Notification {
+            title: notif.title,
+            body: notif.body,
+            image: None,
+        });
+        
         let message = Message::Token {
             token: token.to_string(),
             name: None,
-            notification: Some(Notification {
-                title: notif.title,
-                body: notif.body,
-                image: None,
-            }),
+            notification,  // Can be None for data-only messages
             data: payload.data,
             android: None,
             apns: None,

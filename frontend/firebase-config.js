@@ -1,5 +1,6 @@
 // Firebase configuration - dynamically generated
-window.firebaseConfig = {
+// Use 'const' instead of window for service worker compatibility
+const firebaseConfig = {
     apiKey: "AIzaSyBVZr13kC2niDhmJX2E0oMhGRlDqmC1wSA",
     authDomain: "plur-push-local.firebaseapp.com",
     projectId: "plur-push-local",
@@ -7,3 +8,8 @@ window.firebaseConfig = {
     messagingSenderId: "103876204196",
     appId: "1:103876204196:web:d7a1a1bebbdf6e6b75b831"
 };
+
+// Also set on window if it exists (for main page)
+if (typeof window !== 'undefined') {
+    window.firebaseConfig = firebaseConfig;
+}
