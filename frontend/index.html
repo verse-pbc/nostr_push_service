@@ -378,10 +378,9 @@
                 }
                 
                 if (!config.apiKey || config.apiKey === "") {
-                    log('Firebase not configured. Using test mode.', 'warning');
-                    currentFcmToken = 'test-token-' + Math.random().toString(36).substring(7);
-                    document.getElementById('fcmToken').textContent = currentFcmToken.substring(0, 20) + '...';
-                    return true;
+                    log('Firebase not configured. Push disabled.', 'warning');
+                    document.getElementById('register').disabled = true;
+                    return false;
                 }
                 
                 firebase.initializeApp(config);
