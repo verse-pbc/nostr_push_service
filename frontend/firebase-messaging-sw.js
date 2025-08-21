@@ -34,15 +34,22 @@ messaging.onBackgroundMessage((payload) => {
     // We're using data-only messages
     if (payload.data && payload.data.title && payload.data.body) {
         const title = payload.data.title;
-        const body = payload.data.body;
+        // Add service worker scope/URL info to the body
+        const swInfo = `[SW: ${self.registration.scope}]`;
+        const body = `${payload.data.body}\n${swInfo}`;
         
         console.log('[firebase-messaging-sw.js] Creating notification with:', { title, body });
+        console.log('[firebase-messaging-sw.js] Service Worker Scope:', self.registration.scope);
         
         const notificationOptions = {
             body: body,
             icon: '/icon-192x192.png',
             badge: '/badge-72x72.png',
-            data: payload.data,
+            data: {
+                ...payload.data,
+                serviceWorkerScope: self.registration.scope,
+                serviceWorkerURL: self.location.href
+            },
             tag: payload.data.nostrEventId || `nostr-${Date.now()}`,
             requireInteraction: false,
         };

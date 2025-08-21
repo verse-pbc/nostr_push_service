@@ -139,12 +139,22 @@ async fn serve_fcm_config() -> impl IntoResponse {
     Json(config)
 }
 
+async fn serve_nostr_bundle() -> impl IntoResponse {
+    const JS: &str = include_str!("../frontend/nostr.bundle.js");
+    (
+        StatusCode::OK,
+        [("Content-Type", "application/javascript")],
+        JS
+    )
+}
+
 async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
     let app = Router::new()
         .route("/", get(serve_frontend))
         .route("/firebase-config.js", get(serve_firebase_config))
         .route("/firebase-messaging-sw.js", get(serve_service_worker))
         .route("/config/fcm.json", get(serve_fcm_config))
+        .route("/nostr.bundle.js", get(serve_nostr_bundle))
         .route("/health", get(health_check));
 
     let listen_addr_str = &app_state.settings.server.listen_addr;
