@@ -61,7 +61,7 @@ export PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX=$SERVICE_PRIVATE_KEY
 export PLUR_PUSH__FCM__PROJECT_ID="${FIREBASE_PROJECT_ID}"
 export PLUR_PUSH__FCM__CREDENTIALS_BASE64="$CREDENTIALS_BASE64"
 export REDIS_URL="redis://localhost:6379"
-export RUST_LOG="debug,nostr_relay_pool=debug"
+export RUST_LOG="trace"
 
 # Run the service
 cargo run

@@ -139,12 +139,25 @@ async fn serve_fcm_config() -> impl IntoResponse {
     Json(config)
 }
 
+// Removed serve_nostr_bundle - using CDN version for demo
+
+async fn serve_manifest() -> impl IntoResponse {
+    const MANIFEST: &str = include_str!("../frontend/manifest.json");
+    (
+        StatusCode::OK,
+        [("Content-Type", "application/manifest+json")],
+        MANIFEST
+    )
+}
+
 async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
     let app = Router::new()
         .route("/", get(serve_frontend))
         .route("/firebase-config.js", get(serve_firebase_config))
         .route("/firebase-messaging-sw.js", get(serve_service_worker))
         .route("/config/fcm.json", get(serve_fcm_config))
+        // nostr.bundle.js now served from CDN
+        .route("/manifest.json", get(serve_manifest))
         .route("/health", get(health_check));
 
     let listen_addr_str = &app_state.settings.server.listen_addr;

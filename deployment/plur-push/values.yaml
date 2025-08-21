@@ -1,7 +1,7 @@
 replicaCount: 1
 image:
   repository: ghcr.io/verse-pbc/plur_push_service
-  tag: "0.0.1-47" # Uses Chart.AppVersion when empty
+  tag: "0.0.1-55" # Uses Chart.AppVersion when empty
   pullPolicy: Always
 pdb:
   minAvailable: 1

@@ -96,7 +96,12 @@ pub async fn run(
                 } else if event_kind == KIND_DM {
                     handle_dm(&state, &event, token.clone()).await
                 } else if event_kind == KIND_GROUP_MESSAGE || event_kind == KIND_GROUP_REPLY {
-                    handle_group_message(&state, &event, token.clone()).await
+                    // Handle group messages (mentions and group members)
+                    let group_result = handle_group_message(&state, &event, token.clone()).await;
+                    // Also check custom subscriptions for kind 9/10 events
+                    let subscription_result = handle_custom_subscriptions(&state, &event, token.clone()).await;
+                    // Return the first error if any, otherwise Ok
+                    group_result.and(subscription_result)
                 } else {
                     // For all other kinds, check user subscriptions
                     handle_custom_subscriptions(&state, &event, token.clone()).await
@@ -330,8 +335,51 @@ async fn handle_group_message(
     // Extract the group ID from the first 'h' tag found
     let group_id = event.tags.find(TagKind::h()).and_then(|tag| tag.content());
 
+    // If no group ID, treat this as a regular mention-based message
     let Some(group_id) = group_id else {
-        warn!(event_id = %event.id, "Group message event missing 'h' tag or group ID, cannot determine group. Skipping.");
+        debug!(event_id = %event.id, "No 'h' tag found, treating as regular mention-based kind 9 event");
+        
+        // Process mentions without group membership checks
+        let mentioned_pubkeys = extract_mentioned_pubkeys(event);
+        debug!(event_id = %event.id, mentions = mentioned_pubkeys.len(), "Extracted mentioned pubkeys for non-group message");
+        
+        if mentioned_pubkeys.is_empty() {
+            debug!(event_id = %event.id, "No mentioned pubkeys found in non-group message, skipping notification.");
+            return Ok(());
+        }
+        
+        for target_pubkey in mentioned_pubkeys {
+            if token.is_cancelled() {
+                info!(event_id = %event.id, "Cancelled during non-group message processing.");
+                return Err(crate::error::ServiceError::Cancelled);
+            }
+            
+            if target_pubkey == event.pubkey {
+                info!(
+                    event_id = %event.id, 
+                    target_npub = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                    sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                    "Skipping notification to self in non-group message"
+                );
+                continue;
+            }
+            
+            // Send notification without group membership check
+            info!(
+                event_id = %event.id, 
+                target_npub = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                "Sending notification for non-group mention"
+            );
+            if let Err(e) = send_notification_to_user(state, event, &target_pubkey, token.clone()).await {
+                if matches!(e, crate::error::ServiceError::Cancelled) {
+                    return Err(e);
+                }
+                error!(event_id = %event.id, target_pubkey = %target_pubkey, error = %e, "Failed to send notification to user");
+            }
+        }
+        
+        debug!(event_id = %event.id, "Finished handling non-group kind 9 message");
         return Ok(());
     };
     debug!(event_id = %event.id, %group_id, "Extracted group ID");
@@ -362,7 +410,12 @@ async fn handle_group_message(
         trace!(event_id = %event.id, target_pubkey = %target_pubkey, %group_id, "Processing mention for group");
 
         if target_pubkey == event.pubkey {
-            trace!(event_id = %event.id, target_pubkey = %target_pubkey, "Skipping notification to self");
+            info!(
+                event_id = %event.id, 
+                target_npub = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                "Skipping notification to self in group message"
+            );
             continue;
         }
 
@@ -385,6 +438,14 @@ async fn handle_group_message(
                 continue; // Skip this user due to error, move to the next
             }
         }
+        
+        info!(
+            event_id = %event.id,
+            target_npub = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+            sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+            group_id = %group_id,
+            "Sending notification for group mention"
+        );
 
         if let Err(e) = send_notification_to_user(state, event, &target_pubkey, token.clone()).await
         {
@@ -528,7 +589,7 @@ async fn send_notification_to_user(
     }
 
     trace!(event_id = %event_id, target_pubkey = %target_pubkey, "Creating FCM payload");
-    let payload = create_fcm_payload(event)?;
+    let payload = create_fcm_payload(event, target_pubkey)?;
 
     trace!(event_id = %event_id, target_pubkey = %target_pubkey, token_count = tokens.len(), "Attempting to send FCM notification");
 
@@ -633,7 +694,12 @@ pub async fn handle_custom_subscriptions(
 
         // Skip if this is the sender (don't notify user of their own messages)
         if user_pubkey == event.pubkey {
-            debug!(event_id = %event.id, user = %user_pubkey, "Skipping notification for sender");
+            info!(
+                event_id = %event.id, 
+                user_npub = %user_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                "Skipping notification for sender in custom subscriptions"
+            );
             continue;
         }
 
@@ -667,6 +733,12 @@ pub async fn handle_custom_subscriptions(
         }
 
         if matched {
+            info!(
+                event_id = %event.id,
+                user_npub = %user_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                "Sending notification via custom subscription"
+            );
             if let Err(e) =
                 send_notification_to_user(state, event, &user_pubkey, token.clone()).await
             {
@@ -680,6 +752,12 @@ pub async fn handle_custom_subscriptions(
 
     // Second, check for mentions - process any mentioned users who have tokens
     // This ensures users without subscriptions still get notified when mentioned
+    // Skip this for kind 9/10 events as they're already handled by handle_group_message
+    if event.kind == Kind::Custom(9) || event.kind == Kind::Custom(10) {
+        debug!(event_id = %event.id, "Skipping mention processing for kind 9/10 (handled by handle_group_message)");
+        return Ok(());
+    }
+    
     let mentioned_pubkeys = extract_mentioned_pubkeys(event);
     debug!(event_id = %event.id, mentions = mentioned_pubkeys.len(), "Checking mentioned users");
 
@@ -687,6 +765,17 @@ pub async fn handle_custom_subscriptions(
         if token.is_cancelled() {
             info!(event_id = %event.id, "Cancelled during mention processing");
             return Err(crate::error::ServiceError::Cancelled);
+        }
+
+        // Skip if this is the sender (don't notify user of their own mentions)
+        if mentioned_pubkey == event.pubkey {
+            info!(
+                event_id = %event.id,
+                mentioned_npub = %mentioned_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+                "Skipping notification for self-mention in custom subscriptions"
+            );
+            continue;
         }
 
         // Skip if we already processed this user via subscriptions
@@ -743,7 +832,7 @@ pub fn is_event_too_old(event: &Event) -> bool {
     event.created_at < horizon
 }
 
-fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
+fn create_fcm_payload(event: &Event, target_pubkey: &PublicKey) -> Result<FcmPayload> {
     let sender = &event
         .pubkey
         .to_bech32()
@@ -751,11 +840,18 @@ fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
         .chars()
         .take(12)
         .collect::<String>();
+    
+    let receiver = &target_pubkey
+        .to_bech32()
+        .unwrap()
+        .chars()
+        .take(12)
+        .collect::<String>();
 
     let title = match event.kind {
-        Kind::Custom(9) => format!("Chat from {}", sender),
-        Kind::Custom(1059) => format!("DM from {}", sender),
-        _ => format!("New message from {}", sender),
+        Kind::Custom(9) => format!("Chat from {} → {}", sender, receiver),
+        Kind::Custom(1059) => format!("DM from {} → {}", sender, receiver),
+        _ => format!("New message from {} → {}", sender, receiver),
     };
 
     let body: String = event.content.chars().take(150).collect();
@@ -767,11 +863,16 @@ fn create_fcm_payload(event: &Event) -> Result<FcmPayload> {
     data.insert("title".to_string(), title.clone());
     data.insert("body".to_string(), body.clone());
     data.insert("senderPubkey".to_string(), event.pubkey.to_hex());
+    data.insert("receiverPubkey".to_string(), target_pubkey.to_hex());
+    data.insert("receiverNpub".to_string(), target_pubkey.to_bech32().unwrap());
     data.insert("eventKind".to_string(), event.kind.as_u16().to_string());
     data.insert(
         "timestamp".to_string(),
         event.created_at.as_u64().to_string(),
     );
+    
+    // Add service worker debug info - this will be populated by the service worker
+    data.insert("serviceWorkerScope".to_string(), "pending".to_string());
 
     // Extract group ID from 'h' tag using find() and content()
     let group_id = event
@@ -840,7 +941,11 @@ mod tests {
         // Get the actual event ID after signing
         let actual_event_id = test_event.id.to_hex();
 
-        let payload_result = create_fcm_payload(&test_event);
+        // Create a target pubkey for the test
+        let target_keys = Keys::generate();
+        let target_pubkey = target_keys.public_key();
+        
+        let payload_result = create_fcm_payload(&test_event, &target_pubkey);
         assert!(payload_result.is_ok());
         let payload = payload_result.unwrap();
 
@@ -849,19 +954,27 @@ mod tests {
 
         // Define the expected JSON using the group_id and the actual_event_id
         // Now expects data-only message (no notification field)
+        let receiver_npub_short = target_pubkey.to_bech32().unwrap().chars().take(12).collect::<String>();
         let expected_json = format!(
             r#"{{
             "data": {{
               "nostrEventId": "{}",
-              "title": "New message from npub10xlxvlh",
+              "title": "New message from npub10xlxvlh → {}",
               "body": "This is a test group message mentioning someone. It has more than 150 characters to ensure that the truncation logic is tested properly. Let's add eve",
               "senderPubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
               "eventKind": "11",
               "timestamp": "0",
-              "groupId": "{}"
+              "groupId": "{}",
+              "receiverPubkey": "{}",
+              "receiverNpub": "{}",
+              "serviceWorkerScope": "pending"
             }}
           }}"#,
-            actual_event_id, group_id
+            actual_event_id, 
+            receiver_npub_short,
+            group_id,
+            target_pubkey.to_hex(),
+            target_pubkey.to_bech32().unwrap()
         );
 
         // Parse both JSON strings back into serde_json::Value for comparison

@@ -34,15 +34,22 @@ messaging.onBackgroundMessage((payload) => {
     // We're using data-only messages
     if (payload.data && payload.data.title && payload.data.body) {
         const title = payload.data.title;
-        const body = payload.data.body;
+        // Add service worker scope/URL info to the body
+        const swInfo = `[SW: ${self.registration.scope}]`;
+        const body = `${payload.data.body}\n${swInfo}`;
         
         console.log('[firebase-messaging-sw.js] Creating notification with:', { title, body });
+        console.log('[firebase-messaging-sw.js] Service Worker Scope:', self.registration.scope);
         
         const notificationOptions = {
             body: body,
             icon: '/icon-192x192.png',
             badge: '/badge-72x72.png',
-            data: payload.data,
+            data: {
+                ...payload.data,
+                serviceWorkerScope: self.registration.scope,
+                serviceWorkerURL: self.location.href
+            },
             tag: payload.data.nostrEventId || `nostr-${Date.now()}`,
             requireInteraction: false,
         };
@@ -58,18 +65,23 @@ messaging.onBackgroundMessage((payload) => {
 self.addEventListener('notificationclick', (event) => {
     console.log('[firebase-messaging-sw.js] Notification click received');
     event.notification.close();
+    
+    // Use data.link if available, otherwise use the service worker's scope
+    const targetUrl = event.notification?.data?.link || self.registration.scope;
 
     // Open the app or focus existing window
     event.waitUntil(
-        clients.matchAll({ 
-            type: 'window', 
-            includeUncontrolled: true 
-        }).then((clientList) => {
-            // Try to find and focus an existing window with our app
+        (async () => {
+            const clientList = await clients.matchAll({ 
+                type: 'window', 
+                includeUncontrolled: true 
+            });
+            
+            // Try to find and focus an existing window within our scope
             for (const client of clientList) {
-                if (client.url.includes('localhost:8000') && 'focus' in client) {
-                    client.focus();
-                    // Optionally send a message to the client about the notification
+                if (targetUrl && client.url.startsWith(self.registration.scope)) {
+                    await client.focus();
+                    // Send a message to the client about the notification
                     if (event.notification.data) {
                         client.postMessage({
                             type: 'notification-clicked',
@@ -79,10 +91,11 @@ self.addEventListener('notificationclick', (event) => {
                     return;
                 }
             }
+            
             // If no existing window, open a new one
             if (clients.openWindow) {
-                return clients.openWindow('/');
+                await clients.openWindow(targetUrl);
             }
-        })
+        })()
     );
 });
