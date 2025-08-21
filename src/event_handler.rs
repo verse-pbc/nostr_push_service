@@ -752,6 +752,12 @@ pub async fn handle_custom_subscriptions(
 
     // Second, check for mentions - process any mentioned users who have tokens
     // This ensures users without subscriptions still get notified when mentioned
+    // Skip this for kind 9/10 events as they're already handled by handle_group_message
+    if event.kind == Kind::Custom(9) || event.kind == Kind::Custom(10) {
+        debug!(event_id = %event.id, "Skipping mention processing for kind 9/10 (handled by handle_group_message)");
+        return Ok(());
+    }
+    
     let mentioned_pubkeys = extract_mentioned_pubkeys(event);
     debug!(event_id = %event.id, mentions = mentioned_pubkeys.len(), "Checking mentioned users");
 
@@ -935,7 +941,11 @@ mod tests {
         // Get the actual event ID after signing
         let actual_event_id = test_event.id.to_hex();
 
-        let payload_result = create_fcm_payload(&test_event);
+        // Create a target pubkey for the test
+        let target_keys = Keys::generate();
+        let target_pubkey = target_keys.public_key();
+        
+        let payload_result = create_fcm_payload(&test_event, &target_pubkey);
         assert!(payload_result.is_ok());
         let payload = payload_result.unwrap();
 
@@ -944,19 +954,27 @@ mod tests {
 
         // Define the expected JSON using the group_id and the actual_event_id
         // Now expects data-only message (no notification field)
+        let receiver_npub_short = target_pubkey.to_bech32().unwrap().chars().take(12).collect::<String>();
         let expected_json = format!(
             r#"{{
             "data": {{
               "nostrEventId": "{}",
-              "title": "New message from npub10xlxvlh",
+              "title": "New message from npub10xlxvlh → {}",
               "body": "This is a test group message mentioning someone. It has more than 150 characters to ensure that the truncation logic is tested properly. Let's add eve",
               "senderPubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
               "eventKind": "11",
               "timestamp": "0",
-              "groupId": "{}"
+              "groupId": "{}",
+              "receiverPubkey": "{}",
+              "receiverNpub": "{}",
+              "serviceWorkerScope": "pending"
             }}
           }}"#,
-            actual_event_id, group_id
+            actual_event_id, 
+            receiver_npub_short,
+            group_id,
+            target_pubkey.to_hex(),
+            target_pubkey.to_bech32().unwrap()
         );
 
         // Parse both JSON strings back into serde_json::Value for comparison
