@@ -50,7 +50,6 @@ async fn create_test_state() -> Arc<AppState> {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
-    use redis::AsyncCommands;
     let mut conn = pool.get().await?;
     redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
     Ok(())

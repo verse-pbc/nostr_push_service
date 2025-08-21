@@ -165,7 +165,8 @@ impl FcmClient {
         if let Ok(credentials_base64) = std::env::var("PLUR_PUSH__FCM__CREDENTIALS_BASE64") {
             if !credentials_base64.is_empty() {
                 // Decode base64 credentials
-                match base64::decode(&credentials_base64) {
+                use base64::Engine;
+                match base64::engine::general_purpose::STANDARD.decode(&credentials_base64) {
                     Ok(credentials_json) => {
                         // Write to a temporary file
                         let temp_dir = std::env::temp_dir();

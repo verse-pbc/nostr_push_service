@@ -8,7 +8,6 @@ use plur_push_service::{
     state::AppState
 };
 use std::sync::Arc;
-use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 async fn create_test_state() -> Arc<AppState> {
@@ -62,7 +61,6 @@ async fn create_test_state() -> Arc<AppState> {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
-    use redis::AsyncCommands;
     let mut conn = pool.get().await?;
     redis::cmd("FLUSHDB")
         .query_async::<()>(&mut *conn)

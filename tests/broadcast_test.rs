@@ -168,7 +168,7 @@ async fn setup_test_group_with_admin(
     // --- Publish Admins (Kind 39001) ---
     let mut admin_tags: Vec<Tag> = admin_pubkeys
         .into_iter()
-        .map(|pk| Tag::public_key(pk))
+        .map(Tag::public_key)
         .collect();
     admin_tags.push(Tag::identifier(group_id.to_string()));
 
@@ -182,7 +182,7 @@ async fn setup_test_group_with_admin(
     // --- Publish Members (Kind 39002) ---
     let mut member_tags: Vec<Tag> = member_pubkeys
         .into_iter()
-        .map(|pk| Tag::public_key(pk))
+        .map(Tag::public_key)
         .collect();
     member_tags.push(Tag::identifier(group_id.to_string()));
 
@@ -275,7 +275,7 @@ async fn test_broadcast_notifications() -> Result<()> {
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let message_content = "This is a broadcast message to the group";
 
-    let broadcast_event = EventBuilder::new(Kind::Custom(11), message_content)
+    let broadcast_event = EventBuilder::new(Kind::Custom(9), message_content)
         .tag(group_tag)
         .tag(broadcast_tag)
         .sign(&sender_keys)
@@ -401,7 +401,7 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
     let mention_tag = Tag::public_key(user1_keys.public_key());
     let message_content = format!("Hello @{}", user1_keys.public_key().to_bech32()?);
 
-    let mention_event = EventBuilder::new(Kind::Custom(11), &message_content)
+    let mention_event = EventBuilder::new(Kind::Custom(9), &message_content)
         .tag(group_tag.clone())
         .tag(mention_tag)
         .sign(&sender_keys)
@@ -428,7 +428,7 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let broadcast_content = "Broadcast message to all group members";
 
-    let broadcast_event = EventBuilder::new(Kind::Custom(11), broadcast_content)
+    let broadcast_event = EventBuilder::new(Kind::Custom(9), broadcast_content)
         .tag(group_tag.clone())
         .tag(broadcast_tag)
         .sign(&sender_keys)
@@ -564,7 +564,7 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
     // Measure the time taken to process the broadcast
     let start_time = std::time::Instant::now();
 
-    let broadcast_event = EventBuilder::new(Kind::Custom(11), message_content)
+    let broadcast_event = EventBuilder::new(Kind::Custom(9), message_content)
         .tag(group_tag)
         .tag(broadcast_tag)
         .sign(&sender_keys)
@@ -608,7 +608,7 @@ async fn test_broadcast_tag_detection() -> Result<()> {
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let message_content = "This is a test broadcast message";
 
-    let test_event = EventBuilder::new(Kind::Custom(11), message_content)
+    let test_event = EventBuilder::new(Kind::Custom(9), message_content)
         .tag(group_tag.clone())
         .tag(broadcast_tag)
         .sign(&keys)
@@ -623,7 +623,7 @@ async fn test_broadcast_tag_detection() -> Result<()> {
 
     // Test with malformed/differently-cased broadcast tag
     let malformed_tag = Tag::parse(["BrOaDcAsT"])?;
-    let event_with_malformed_tag = EventBuilder::new(Kind::Custom(11), message_content)
+    let event_with_malformed_tag = EventBuilder::new(Kind::Custom(9), message_content)
         .tag(group_tag.clone())
         .tag(malformed_tag)
         .sign(&keys)
@@ -639,7 +639,7 @@ async fn test_broadcast_tag_detection() -> Result<()> {
     );
 
     // Test with no broadcast tag
-    let event_without_broadcast = EventBuilder::new(Kind::Custom(11), message_content)
+    let event_without_broadcast = EventBuilder::new(Kind::Custom(9), message_content)
         .tag(group_tag.clone())
         .sign(&keys)
         .await?;
@@ -725,7 +725,7 @@ async fn test_admin_permission_verification() -> Result<()> {
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let admin_message = "Admin broadcast message";
 
-    let admin_broadcast_event = EventBuilder::new(Kind::Custom(11), admin_message)
+    let admin_broadcast_event = EventBuilder::new(Kind::Custom(9), admin_message)
         .tag(group_tag.clone())
         .tag(broadcast_tag.clone())
         .sign(&admin_keys)
@@ -754,7 +754,7 @@ async fn test_admin_permission_verification() -> Result<()> {
     // 2. Test broadcast from non-admin user (should be rejected)
     let non_admin_message = "Non-admin broadcast message attempt";
 
-    let non_admin_broadcast_event = EventBuilder::new(Kind::Custom(11), non_admin_message)
+    let non_admin_broadcast_event = EventBuilder::new(Kind::Custom(9), non_admin_message)
         .tag(group_tag.clone())
         .tag(broadcast_tag.clone())
         .sign(&non_admin_keys)
@@ -848,7 +848,7 @@ async fn test_event_kind_filtering() -> Result<()> {
 
     // 1. Test with ALLOWED kind 11 (broadcastable) - should send notification
     let allowed_message = "Allowed event kind broadcast";
-    let allowed_kind_event = EventBuilder::new(Kind::Custom(11), allowed_message)
+    let allowed_kind_event = EventBuilder::new(Kind::Custom(9), allowed_message)
         .tag(group_tag.clone())
         .tag(broadcast_tag.clone())
         .sign(&admin_keys)
@@ -866,12 +866,12 @@ async fn test_event_kind_filtering() -> Result<()> {
     assert_eq!(
         allowed_sent_messages.len(),
         1,
-        "Expected 1 notification from allowed kind (11) broadcast"
+        "Expected 1 notification from allowed kind (9) broadcast"
     );
 
-    // 2. Test with ALLOWED kind 12 (broadcastable) - should send notification
-    let allowed_reply_message = "Allowed reply event kind broadcast";
-    let allowed_reply_event = EventBuilder::new(Kind::Custom(12), allowed_reply_message)
+    // 2. Test with DISALLOWED kind 12 (not broadcastable) - should NOT send notification
+    let disallowed_reply_message = "Disallowed reply event kind broadcast";
+    let disallowed_reply_event = EventBuilder::new(Kind::Custom(12), disallowed_reply_message)
         .tag(group_tag.clone())
         .tag(broadcast_tag.clone())
         .sign(&admin_keys)
@@ -880,19 +880,19 @@ async fn test_event_kind_filtering() -> Result<()> {
     // Clear previous messages
     fcm_mock.clear();
     
-    // Send the allowed reply kind event
-    admin_client.send_event(&allowed_reply_event).await?;
+    // Send the disallowed reply kind event
+    admin_client.send_event(&disallowed_reply_event).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Verify notification was sent (allowed kind)
-    let allowed_reply_sent_messages = fcm_mock.get_sent_messages();
+    // Verify notification was NOT sent (disallowed kind)
+    let disallowed_reply_sent_messages = fcm_mock.get_sent_messages();
     assert_eq!(
-        allowed_reply_sent_messages.len(),
-        1,
-        "Expected 1 notification from allowed kind (12) broadcast"
+        disallowed_reply_sent_messages.len(),
+        0,
+        "Expected 0 notifications from disallowed kind (12) broadcast"
     );
 
-    // 3. Test with DISALLOWED kind (e.g., Kind 42) - should NOT send notification
+    // 3. Test with ANOTHER DISALLOWED kind (e.g., Kind 42) - should NOT send notification
     let disallowed_message = "Disallowed event kind broadcast attempt";
     let disallowed_kind_event = EventBuilder::new(Kind::Custom(42), disallowed_message)
         .tag(group_tag.clone())

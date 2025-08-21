@@ -1,7 +1,6 @@
 use nostr_sdk::prelude::*;
-use plur_push_service::{event_handler, redis_store};
+use plur_push_service::event_handler;
 use std::time::Duration;
-use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn test_replay_horizon_ignores_old_events() {
@@ -21,7 +20,7 @@ async fn test_replay_horizon_ignores_old_events() {
 #[tokio::test]
 async fn test_replay_horizon_accepts_recent_events() {
     // Create an event that's 1 day old (within 7-day horizon)
-    let recent_timestamp = Timestamp::now() - Duration::from_secs(1 * 24 * 60 * 60);
+    let recent_timestamp = Timestamp::now() - Duration::from_secs(24 * 60 * 60);
     
     let event = EventBuilder::new(Kind::TextNote, "Recent message")
         .custom_created_at(recent_timestamp)

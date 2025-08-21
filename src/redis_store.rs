@@ -139,9 +139,9 @@ pub async fn add_or_update_token(pool: &RedisPool, pubkey: &PublicKey, token: &s
                 "FCM token registration rejected! Token already registered to pubkey {} but attempted registration by {}",
                 existing, pubkey_hex
             );
-            return Err(ServiceError::Internal(format!(
-                "Token already registered to a different user"
-            )));
+            return Err(ServiceError::Internal(
+                "Token already registered to a different user".to_string()
+            ));
         }
     }
 

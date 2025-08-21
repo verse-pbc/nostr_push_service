@@ -8,7 +8,11 @@ use plur_push_service::{
     state::AppState,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_util::sync::CancellationToken;
+
+// Counter for unique test tokens
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
     dotenvy::dotenv().ok();
@@ -52,7 +56,6 @@ async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
-    use redis::AsyncCommands;
     let mut conn = pool.get().await?;
     redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
     Ok(())
@@ -63,8 +66,9 @@ async fn test_filter_matches_kind() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
     
-    // Register token for user
-    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), "test_token")
+    // Register token for user with unique ID
+    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
     
@@ -95,8 +99,9 @@ async fn test_filter_matches_author() {
     let user_keys = Keys::generate();
     let author_keys = Keys::generate();
     
-    // Register token
-    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), "test_token")
+    // Register token with unique ID for each test
+    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
     
@@ -124,8 +129,9 @@ async fn test_filter_no_match() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
     
-    // Register token
-    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), "test_token")
+    // Register token with unique ID for each test
+    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
     
@@ -156,7 +162,8 @@ async fn test_default_behavior_mentions() {
     let sender_keys = Keys::generate();
     
     // Register token but NO subscriptions
-    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), "test_token")
+    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
     
@@ -180,8 +187,9 @@ async fn test_multiple_matching_filters() {
     let user_keys = Keys::generate();
     let author_keys = Keys::generate();
     
-    // Register token
-    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), "test_token")
+    // Register token with unique ID for each test
+    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
     
