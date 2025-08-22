@@ -1,7 +1,7 @@
 use anyhow::Result;
 use nostr_sdk::{Event, EventBuilder, Keys, Kind, Tag, Timestamp, ToBech32};
 use serial_test::serial;
-use plur_push_service::{
+use nostr_push_service::{
     config::Settings,
     redis_store::{self},
     state::AppState,
@@ -31,7 +31,7 @@ pub enum EventContext {
 }
 
 /// Setup test state with mock FCM
-async fn setup_test_state() -> Result<(Arc<AppState>, Arc<plur_push_service::fcm_sender::MockFcmSender>)> {
+async fn setup_test_state() -> Result<(Arc<AppState>, Arc<nostr_push_service::fcm_sender::MockFcmSender>)> {
     dotenvy::dotenv().ok();
     let redis_host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
     let redis_port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
@@ -49,7 +49,7 @@ async fn setup_test_state() -> Result<(Arc<AppState>, Arc<plur_push_service::fcm
     }
 
     let test_key_hex = "0000000000000000000000000000000000000000000000000000000000000001";
-    std::env::set_var("PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX", test_key_hex);
+    std::env::set_var("NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX", test_key_hex);
 
     let mut settings = Settings::new()?;
     settings.nostr.relay_url = "wss://test.relay".to_string();
@@ -63,14 +63,14 @@ async fn setup_test_state() -> Result<(Arc<AppState>, Arc<plur_push_service::fcm
         redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
     }
 
-    let mock_fcm = plur_push_service::fcm_sender::MockFcmSender::new();
+    let mock_fcm = nostr_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_arc = Arc::new(mock_fcm.clone());
-    let fcm_client = Arc::new(plur_push_service::fcm_sender::FcmClient::new_with_impl(
+    let fcm_client = Arc::new(nostr_push_service::fcm_sender::FcmClient::new_with_impl(
         Box::new(mock_fcm),
     ));
 
     let test_keys = Keys::generate();
-    let nip29_client = plur_push_service::nostr::nip29::Nip29Client::new(
+    let nip29_client = nostr_push_service::nostr::nip29::Nip29Client::new(
         settings.nostr.relay_url.clone(),
         test_keys.clone(),
         300,

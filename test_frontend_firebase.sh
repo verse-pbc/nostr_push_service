@@ -52,14 +52,14 @@ echo "  - Relay: wss://communities.nos.social"
 echo "  - Redis: localhost:6379"
 echo "  - Firebase Project: ${FIREBASE_PROJECT_ID}"
 echo ""
-echo "🌐 Starting Plur Push Service..."
+echo "🌐 Starting Nostr Push Service..."
 echo "================================="
 echo ""
 
 # Set environment variables and run the service
-export PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX=$SERVICE_PRIVATE_KEY
-export PLUR_PUSH__FCM__PROJECT_ID="${FIREBASE_PROJECT_ID}"
-export PLUR_PUSH__FCM__CREDENTIALS_BASE64="$CREDENTIALS_BASE64"
+export NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX=$SERVICE_PRIVATE_KEY
+export NOSTR_PUSH__FCM__PROJECT_ID="${FIREBASE_PROJECT_ID}"
+export NOSTR_PUSH__FCM__CREDENTIALS_BASE64="$CREDENTIALS_BASE64"
 export REDIS_URL="redis://localhost:6379"
 export RUST_LOG="trace"
 

@@ -1,5 +1,5 @@
 [package]
-name = "plur_push_service"
+name = "nostr_push_service"
 version = "0.1.0"
 edition = "2021"
 
@@ -68,6 +68,6 @@ url = "2.5"
 # nostr-relay = { version = "0.4.7", package = "nostr-relay" }
 # Add nostr-relay-builder back
 nostr-relay-builder = { version = "0.40.0", package = "nostr-relay-builder" }
-plur_push_service = { path = "." }
+nostr_push_service = { path = "." }
 serial_test = "3.2.0"
 # testcontainers = "0.20.0" # Removed

@@ -11,12 +11,12 @@ use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-use plur_push_service::cleanup_service;
-use plur_push_service::config;
-use plur_push_service::error::Result;
-use plur_push_service::event_handler;
-use plur_push_service::nostr_listener;
-use plur_push_service::state; // Assuming Result is pub in error mod
+use nostr_push_service::cleanup_service;
+use nostr_push_service::config;
+use nostr_push_service::error::Result;
+use nostr_push_service::event_handler;
+use nostr_push_service::nostr_listener;
+use nostr_push_service::state; // Assuming Result is pub in error mod
 
 use nostr_sdk::prelude::Event; // Keep this specific use
 
@@ -76,7 +76,7 @@ window.firebaseConfig = {{
         std::env::var("FIREBASE_API_KEY").unwrap_or_else(|_| "".to_string()),
         std::env::var("FIREBASE_AUTH_DOMAIN").unwrap_or_else(|_| "".to_string()),
         std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| 
-            std::env::var("PLUR_PUSH__FCM__PROJECT_ID").unwrap_or_else(|_| "".to_string())
+            std::env::var("NOSTR_PUSH__FCM__PROJECT_ID").unwrap_or_else(|_| "".to_string())
         ),
         std::env::var("FIREBASE_STORAGE_BUCKET").unwrap_or_else(|_| "".to_string()),
         std::env::var("FIREBASE_MESSAGING_SENDER_ID").unwrap_or_else(|_| "".to_string()),
@@ -104,7 +104,7 @@ async fn serve_service_worker() -> impl IntoResponse {
         std::env::var("FIREBASE_API_KEY").unwrap_or_else(|_| "".to_string()),
         std::env::var("FIREBASE_AUTH_DOMAIN").unwrap_or_else(|_| "".to_string()),
         std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| 
-            std::env::var("PLUR_PUSH__FCM__PROJECT_ID").unwrap_or_else(|_| "".to_string())
+            std::env::var("NOSTR_PUSH__FCM__PROJECT_ID").unwrap_or_else(|_| "".to_string())
         ),
         std::env::var("FIREBASE_STORAGE_BUCKET").unwrap_or_else(|_| "".to_string()),
         std::env::var("FIREBASE_MESSAGING_SENDER_ID").unwrap_or_else(|_| "".to_string()),
@@ -127,7 +127,7 @@ async fn serve_fcm_config() -> impl IntoResponse {
         "apiKey": std::env::var("FIREBASE_API_KEY").unwrap_or_default(),
         "authDomain": std::env::var("FIREBASE_AUTH_DOMAIN").unwrap_or_default(),
         "projectId": std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| 
-            std::env::var("PLUR_PUSH__FCM__PROJECT_ID").unwrap_or_default()
+            std::env::var("NOSTR_PUSH__FCM__PROJECT_ID").unwrap_or_default()
         ),
         "storageBucket": std::env::var("FIREBASE_STORAGE_BUCKET").unwrap_or_default(),
         "messagingSenderId": std::env::var("FIREBASE_MESSAGING_SENDER_ID").unwrap_or_default(),
@@ -228,7 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target(true)
         .init();
 
-    tracing::info!("Starting Plur Push Service...");
+    tracing::info!("Starting Nostr Push Service...");
 
     let settings = config::Settings::new()?;
     tracing::info!("Configuration loaded successfully");
@@ -300,6 +300,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wait for all tracked tasks to complete using SimpleTaskTracker's wait
     tracker.wait().await;
 
-    tracing::info!("Plur Push Service stopped.");
+    tracing::info!("Nostr Push Service stopped.");
     Ok(())
 }

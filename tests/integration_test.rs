@@ -14,7 +14,7 @@ use nostr_sdk::{
     Tag,
     ToBech32, // Import ToBech32 trait
 };
-use plur_push_service::{
+use nostr_push_service::{
     config::Settings,
     redis_store::{self, RedisPool},
     state::AppState,
@@ -32,15 +32,15 @@ use url::Url;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Import service components and event type
-use plur_push_service::{event_handler, nostr_listener};
-use plur_push_service::event_handler::EventContext;
+use nostr_push_service::{event_handler, nostr_listener};
+use nostr_push_service::event_handler::EventContext;
 use tokio::sync::mpsc; // Keep specific mpsc import for clarity
 
 // --- Test Relay Setup ---
 
 async fn setup_test_environment() -> Result<(
     Arc<AppState>,
-    Arc<plur_push_service::fcm_sender::MockFcmSender>,
+    Arc<nostr_push_service::fcm_sender::MockFcmSender>,
     Url,
     MockRelay,
 )> {
@@ -69,7 +69,7 @@ async fn setup_test_environment() -> Result<(
     let test_key_hex = "0000000000000000000000000000000000000000000000000000000000000001";
 
     // Set the environment variable with our test key hex
-    std::env::set_var("PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX", test_key_hex);
+    std::env::set_var("NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX", test_key_hex);
 
     let mut settings = Settings::new()
         .map_err(|e| anyhow!("Failed to load settings after setting env var: {}", e))?;
@@ -86,7 +86,7 @@ async fn setup_test_environment() -> Result<(
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Manually construct AppState to inject MockFcmSender
-    let redis_pool = plur_push_service::redis_store::create_pool(
+    let redis_pool = nostr_push_service::redis_store::create_pool(
         &redis_url_constructed, // Use the constructed URL
         settings.redis.connection_pool_size,
     )
@@ -102,17 +102,17 @@ async fn setup_test_environment() -> Result<(
         redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
     }
 
-    let mock_fcm_sender_instance = plur_push_service::fcm_sender::MockFcmSender::new();
+    let mock_fcm_sender_instance = nostr_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone()); // Arc for returning
 
     // Create FcmClient wrapper with the mock implementation
-    let fcm_client = Arc::new(plur_push_service::fcm_sender::FcmClient::new_with_impl(
+    let fcm_client = Arc::new(nostr_push_service::fcm_sender::FcmClient::new_with_impl(
         Box::new(mock_fcm_sender_instance),
     ));
 
     // Initialize Nip29Client for the AppState, ensuring it connects to the mock relay
     let nip29_cache_expiration = settings.nostr.cache_expiration.unwrap_or(300);
-    let nip29_client = plur_push_service::nostr::nip29::Nip29Client::new(
+    let nip29_client = nostr_push_service::nostr::nip29::Nip29Client::new(
         relay_url_str.clone(),     // Use the mock relay URL
         test_service_keys.clone(), // Use the service keys generated for this test instance
         nip29_cache_expiration,
@@ -123,7 +123,7 @@ async fn setup_test_environment() -> Result<(
     // Add a small delay to ensure the client has time to establish the connection
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let app_state = plur_push_service::state::AppState {
+    let app_state = nostr_push_service::state::AppState {
         settings,
         redis_pool,
         fcm_client,
@@ -150,10 +150,10 @@ async fn test_register_device_token() -> Result<()> {
     let pubkey = PublicKey::from_hex(pubkey_hex)?;
     let token = format!("test_token_for_registration_{}", test_id);
 
-    plur_push_service::redis_store::add_or_update_token(&state.redis_pool, &pubkey, &token).await?;
+    nostr_push_service::redis_store::add_or_update_token(&state.redis_pool, &pubkey, &token).await?;
 
     let stored_tokens =
-        plur_push_service::redis_store::get_tokens_for_pubkey(&state.redis_pool, &pubkey).await?;
+        nostr_push_service::redis_store::get_tokens_for_pubkey(&state.redis_pool, &pubkey).await?;
     assert_eq!(stored_tokens.len(), 1);
     assert_eq!(stored_tokens[0], token);
 
@@ -166,7 +166,7 @@ async fn test_register_device_token() -> Result<()> {
                 anyhow!("Failed to get Redis connection: {}", e)
             })?;
     let stored_pubkey_hex: Option<String> = conn
-        .hget(plur_push_service::redis_store::TOKEN_TO_PUBKEY_HASH, token)
+        .hget(nostr_push_service::redis_store::TOKEN_TO_PUBKEY_HASH, token)
         .await
         .map_err(|e: redis::RedisError| anyhow!("Failed to HGET token mapping: {}", e))?;
     assert_eq!(stored_pubkey_hex, Some(pubkey_hex.to_string()));

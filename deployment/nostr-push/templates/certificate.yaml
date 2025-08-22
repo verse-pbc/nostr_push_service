@@ -1,13 +1,13 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: plur-push-certificate
-  namespace: plur-push
+  name: nostr-push-certificate
+  namespace: nostr-push
   labels:
-    app.kubernetes.io/part-of: plur-push
+    app.kubernetes.io/part-of: nostr-push
     app.kubernetes.io/managed-by: Helm
 spec:
-  secretName: plur-push-certificate
+  secretName: nostr-push-certificate
   privateKey:
     algorithm: RSA
     encoding: PKCS1

@@ -177,9 +177,9 @@ jobs:
         run: |
           echo "Image tag being patched to manifests:"
           echo ${{ needs.get_version.outputs.SemVer }}
-          yq -i '.version = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/plur-push/Chart.yaml
-          yq -i '.appVersion = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/plur-push/Chart.yaml
-          yq -i '.image.tag = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/plur-push/values.yaml
+          yq -i '.version = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/nostr-push/Chart.yaml
+          yq -i '.appVersion = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/nostr-push/Chart.yaml
+          yq -i '.image.tag = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/nostr-push/values.yaml
 
       - name: Commit and Push to Trigger Release
         shell: bash

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use nostr_relay_builder::MockRelay;
 use serial_test::serial;
 use nostr_sdk::{ClientBuilder, Event, EventBuilder, Keys, Kind, PublicKey, Tag, ToBech32};
-use plur_push_service::{
+use nostr_push_service::{
     config::Settings,
     redis_store::{self, RedisPool},
     state::AppState,
@@ -19,14 +19,14 @@ use url::Url;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Import service components
-use plur_push_service::{event_handler, nostr_listener};
-use plur_push_service::event_handler::EventContext;
+use nostr_push_service::{event_handler, nostr_listener};
+use nostr_push_service::event_handler::EventContext;
 use tokio::sync::mpsc;
 
 /// Test environment setup, similar to integration_test.rs but focused on broadcast tests
 async fn setup_broadcast_test_environment() -> Result<(
     Arc<AppState>,
-    Arc<plur_push_service::fcm_sender::MockFcmSender>,
+    Arc<nostr_push_service::fcm_sender::MockFcmSender>,
     Url,
     MockRelay,
 )> {
@@ -52,7 +52,7 @@ async fn setup_broadcast_test_environment() -> Result<(
 
     // For testing purposes, use a hardcoded test key in hex format
     let test_key_hex = "0000000000000000000000000000000000000000000000000000000000000001";
-    std::env::set_var("PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX", test_key_hex);
+    std::env::set_var("NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX", test_key_hex);
 
     let mut settings = Settings::new()
         .map_err(|e| anyhow!("Failed to load settings after setting env var: {}", e))?;
@@ -68,7 +68,7 @@ async fn setup_broadcast_test_environment() -> Result<(
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Create Redis pool
-    let redis_pool = plur_push_service::redis_store::create_pool(
+    let redis_pool = nostr_push_service::redis_store::create_pool(
         &redis_url_constructed,
         settings.redis.connection_pool_size,
     )
@@ -84,17 +84,17 @@ async fn setup_broadcast_test_environment() -> Result<(
     println!("Redis cleanup completed successfully.");
 
     // Create mock FCM sender
-    let mock_fcm_sender_instance = plur_push_service::fcm_sender::MockFcmSender::new();
+    let mock_fcm_sender_instance = nostr_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone());
 
     // Create FcmClient wrapper with the mock implementation
-    let fcm_client = Arc::new(plur_push_service::fcm_sender::FcmClient::new_with_impl(
+    let fcm_client = Arc::new(nostr_push_service::fcm_sender::FcmClient::new_with_impl(
         Box::new(mock_fcm_sender_instance),
     ));
 
     // Initialize Nip29Client for the AppState
     let nip29_cache_expiration = settings.nostr.cache_expiration.unwrap_or(300);
-    let nip29_client = plur_push_service::nostr::nip29::Nip29Client::new(
+    let nip29_client = nostr_push_service::nostr::nip29::Nip29Client::new(
         relay_url_str.clone(),
         test_service_keys.clone(),
         nip29_cache_expiration,
@@ -105,7 +105,7 @@ async fn setup_broadcast_test_environment() -> Result<(
     // Add a small delay to ensure the client has time to establish the connection
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let app_state = plur_push_service::state::AppState {
+    let app_state = nostr_push_service::state::AppState {
         settings,
         redis_pool,
         fcm_client,

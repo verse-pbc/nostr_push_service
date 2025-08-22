@@ -3,7 +3,7 @@
 # Firebase Setup Script for Local Development
 # This script helps you configure Firebase for local FCM testing
 
-echo "🔥 Firebase Local Setup for Plur Push Service"
+echo "🔥 Firebase Local Setup for Nostr Push Service"
 echo "============================================="
 echo ""
 echo "Follow these steps to set up Firebase:"

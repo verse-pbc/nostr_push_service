@@ -69,8 +69,8 @@ impl Settings {
 
         let s = config::Config::builder()
             .add_source(config::File::from(config_path).required(true))
-            // Eg.. `PLUR_PUSH__REDIS__URL=redis://...` would override `redis.url`
-            .add_source(config::Environment::with_prefix("PLUR_PUSH").separator("__"))
+            // Eg.. `NOSTR_PUSH__REDIS__URL=redis://...` would override `redis.url`
+            .add_source(config::Environment::with_prefix("NOSTR_PUSH").separator("__"))
             .build()?;
 
         s.try_deserialize()
@@ -78,7 +78,7 @@ impl Settings {
 
     // Helper method to get service keys
     pub fn get_service_keys(&self) -> Option<nostr_sdk::Keys> {
-        // It will be overridden by PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX if set.
+        // It will be overridden by NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX if set.
         let key_hex = self.service.private_key_hex.as_deref()?;
         let secret_key = nostr_sdk::SecretKey::from_hex(key_hex).ok()?;
         Some(nostr_sdk::Keys::new(secret_key))

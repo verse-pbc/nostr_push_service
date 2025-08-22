@@ -1,6 +1,6 @@
 {
-  "name": "Plur Push Notifications",
-  "short_name": "Plur Push",
+  "name": "Nostr Push Notifications",
+  "short_name": "Nostr Push",
   "description": "Nostr push notification service demo",
   "start_url": "/",
   "display": "standalone",
