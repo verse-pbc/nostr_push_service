@@ -872,16 +872,31 @@
                 if (!('Notification' in window)) {
                     log('Notification API not found', 'error');
                     
-                    // Check if we're on an insecure context
-                    if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+                    // Check if iOS
+                    if (isIOS) {
+                        if (!isStandalone) {
+                            log('📱 iOS detected - Push requires PWA mode!', 'error');
+                            log('To enable push notifications:', 'info');
+                            log('1. Tap Share button (box with arrow)', 'info');
+                            log('2. Select "Add to Home Screen"', 'info');
+                            log('3. Open app from home screen', 'info');
+                            log('4. Register for push from the PWA', 'info');
+                        } else {
+                            // In PWA but still no API - probably HTTP
+                            log('⚠️ HTTPS required for notifications!', 'error');
+                            log('Use HTTPS URL or http://localhost', 'error');
+                        }
+                    } else if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+                        // Non-iOS, insecure context
                         log('⚠️ HTTPS required for notifications!', 'error');
                         log(`You're using: ${window.location.protocol}//${window.location.hostname}`, 'info');
                         log('Options:', 'info');
                         log('1. Use http://localhost:8000 instead', 'info');
                         log('2. Set up HTTPS for this domain', 'info');
                     } else {
-                        log('iOS requires Safari 16.4+ for push notifications', 'info');
-                        log('Please update iOS/Safari if on older version', 'info');
+                        // Non-iOS, other issue
+                        log('Push notifications not supported in this browser', 'info');
+                        log('Try Chrome, Firefox, or Safari 16.4+', 'info');
                     }
                     return;
                 }
