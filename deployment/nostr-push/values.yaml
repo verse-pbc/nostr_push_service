@@ -1,6 +1,6 @@
 replicaCount: 1
 image:
-  repository: ghcr.io/verse-pbc/plur_push_service
+  repository: ghcr.io/verse-pbc/nostr_push_service
   tag: "0.0.1-62" # Uses Chart.AppVersion when empty
   pullPolicy: Always
 pdb:
@@ -15,4 +15,4 @@ service:
 ingress:
   enabled: false
   className: "nginx"
-  host: "plurpush.verse.app"
+  host: "nostrpush.verse.app"
