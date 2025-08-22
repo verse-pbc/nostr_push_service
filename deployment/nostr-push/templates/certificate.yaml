@@ -22,7 +22,7 @@ spec:
     organizations:
       - cert-manager
   dnsNames:
-    - plurpush.verse.app
+    - nostrpush.verse.app
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
