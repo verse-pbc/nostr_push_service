@@ -361,7 +361,7 @@
             
             <div class="section">
                 <h2>📱 Push Notifications</h2>
-                <button id="register" onclick="registerForPush()">Register for Push (kind 3079)</button>
+                <button id="register" onclick="registerForPush()" disabled>Register for Push (kind 3079)</button>
                 <button id="deregister" onclick="deregisterPush()" disabled>Deregister (kind 3080)</button>
                 <span id="pushStatus" class="status-badge inactive">Not Registered</span>
             </div>
@@ -493,6 +493,14 @@
             
             // Count service workers
             updateServiceWorkerCount();
+            
+            // Enable register button now that everything is initialized
+            if (finalizeEvent && privateKey && publicKey && pool) {
+                document.getElementById('register').disabled = false;
+                log('Initialization complete - Register button enabled', 'success');
+            } else {
+                log('Initialization incomplete - some components failed to load', 'warning');
+            }
         });
 
         function generateKeys() {
@@ -637,23 +645,69 @@
                 vapidPublicKey = config.vapidPublicKey;
                 
                 // Handle foreground messages
-                messaging.onMessage((payload) => {
+                messaging.onMessage(async (payload) => {
                     log(`Message received: ${payload.data?.title || 'Notification'}`, 'success');
                     
-                    // Show notification even in foreground
-                    if ('Notification' in window && Notification.permission === 'granted') {
-                        const notification = new Notification(
-                            payload.data?.title || 'New Message',
-                            {
+                    // Check notification permission first
+                    if (Notification.permission !== 'granted') {
+                        log('Notification permission not granted', 'warning');
+                        return;
+                    }
+                    
+                    // For Android PWA, use service worker to show notification
+                    // This ensures consistent behavior across foreground/background
+                    try {
+                        if ('serviceWorker' in navigator) {
+                            const registration = await navigator.serviceWorker.ready;
+                            const title = payload.data?.title || 'New Message';
+                            const options = {
                                 body: payload.data?.body || '',
-                                icon: '/favicon.ico'
-                            }
-                        );
-                        
-                        notification.onclick = () => {
-                            window.focus();
-                            notification.close();
-                        };
+                                icon: '/icon-192x192.png',
+                                badge: '/badge-72x72.png',
+                                data: payload.data,
+                                tag: payload.data?.nostrEventId || `nostr-${Date.now()}`,
+                                requireInteraction: false,
+                                vibrate: [200, 100, 200]
+                            };
+                            
+                            await registration.showNotification(title, options);
+                            log('Notification shown via Service Worker', 'info');
+                        } else {
+                            // Fallback for non-PWA environments
+                            const notification = new Notification(
+                                payload.data?.title || 'New Message',
+                                {
+                                    body: payload.data?.body || '',
+                                    icon: '/favicon.ico'
+                                }
+                            );
+                            
+                            notification.onclick = () => {
+                                window.focus();
+                                notification.close();
+                            };
+                            log('Notification shown via Notification API', 'info');
+                        }
+                    } catch (err) {
+                        log(`Notification error: ${err.message}`, 'error');
+                        // Try fallback method
+                        try {
+                            const notification = new Notification(
+                                payload.data?.title || 'New Message',
+                                {
+                                    body: payload.data?.body || '',
+                                    icon: '/favicon.ico'
+                                }
+                            );
+                            
+                            notification.onclick = () => {
+                                window.focus();
+                                notification.close();
+                            };
+                            log('Notification shown via fallback', 'info');
+                        } catch (fallbackErr) {
+                            log(`Fallback also failed: ${fallbackErr.message}`, 'error');
+                        }
                     }
                 });
                 
@@ -839,6 +893,12 @@
         
         async function registerForPush() {
             try {
+                // Ensure all required functions are initialized
+                if (!finalizeEvent || !pool || !privateKey || !publicKey) {
+                    log('App not fully initialized. Please wait a moment and try again.', 'error');
+                    return;
+                }
+                
                 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
                 const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
                 
