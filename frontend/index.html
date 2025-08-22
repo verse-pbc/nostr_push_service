@@ -488,12 +488,29 @@
             // Initialize nostr-tools functions
             if (window.NostrTools) {
                 const tools = window.NostrTools;
+                log('NostrTools loaded, available functions:', 'info');
+                log(Object.keys(tools).filter(k => typeof tools[k] === 'function').join(', '), 'info');
+                
                 SimplePool = tools.SimplePool;
                 getPublicKey = tools.getPublicKey;
                 generateSecretKey = tools.generateSecretKey;
-                finalizeEvent = tools.finishEvent || tools.finalizeEvent;
+                
+                // Debug the finishEvent assignment
+                if (tools.finishEvent) {
+                    finalizeEvent = tools.finishEvent;
+                    log('Using tools.finishEvent for finalizeEvent', 'success');
+                } else if (tools.finalizeEvent) {
+                    finalizeEvent = tools.finalizeEvent;
+                    log('Using tools.finalizeEvent for finalizeEvent', 'success');
+                } else {
+                    log('WARNING: Neither finishEvent nor finalizeEvent found in NostrTools!', 'error');
+                    log('Available: ' + Object.keys(tools).join(', '), 'error');
+                }
+                
                 getEventHash = tools.getEventHash;
                 pool = new SimplePool();
+                
+                log(`Initialization check - finalizeEvent: ${typeof finalizeEvent}`, 'info');
             } else {
                 log('NostrTools not loaded!', 'error');
                 return;
@@ -1081,13 +1098,60 @@
                     }
                 }
                 
-                // Send registration event
-                const event = finalizeEvent({
+                // Debug: Log the state before creating event
+                log('=== Creating Registration Event ===', 'info');
+                log(`finalizeEvent function: ${typeof finalizeEvent}`, 'info');
+                log(`privateKey: ${privateKey ? privateKey.substring(0, 10) + '...' : 'UNDEFINED'}`, 'info');
+                log(`publicKey: ${publicKey ? publicKey.substring(0, 10) + '...' : 'UNDEFINED'}`, 'info');
+                log(`currentFcmToken: ${currentFcmToken ? currentFcmToken.substring(0, 20) + '...' : 'UNDEFINED'}`, 'info');
+                
+                // Create the event object first to debug it
+                const eventData = {
                     kind: 3079,
-                    content: currentFcmToken,
+                    content: currentFcmToken || '',
                     tags: [],
                     created_at: Math.floor(Date.now() / 1000)
-                }, privateKey);
+                };
+                log(`Event data before finalize: ${JSON.stringify(eventData)}`, 'info');
+                
+                // Check if we have all required functions
+                if (!finalizeEvent) {
+                    log('ERROR: finalizeEvent is not defined!', 'error');
+                    log('Available NostrTools functions:', 'error');
+                    if (window.NostrTools) {
+                        log(Object.keys(window.NostrTools).join(', '), 'error');
+                    } else {
+                        log('NostrTools is not loaded!', 'error');
+                    }
+                    throw new Error('finalizeEvent is not defined');
+                }
+                
+                if (!privateKey) {
+                    log('ERROR: privateKey is not defined!', 'error');
+                    throw new Error('privateKey is not defined');
+                }
+                
+                // Try to create the event with detailed error catching
+                let event;
+                try {
+                    event = finalizeEvent(eventData, privateKey);
+                    log(`Event created successfully: id=${event.id?.substring(0, 10)}...`, 'success');
+                } catch (finalizeError) {
+                    log(`ERROR in finalizeEvent: ${finalizeError.message}`, 'error');
+                    log(`Stack trace: ${finalizeError.stack}`, 'error');
+                    
+                    // Try to manually check what getPublicKey returns
+                    if (window.NostrTools && window.NostrTools.getPublicKey) {
+                        try {
+                            const testPubkey = window.NostrTools.getPublicKey(privateKey);
+                            log(`Manual getPublicKey test: ${testPubkey ? testPubkey.substring(0, 10) + '...' : 'FAILED'}`, 'info');
+                        } catch (e) {
+                            log(`Manual getPublicKey failed: ${e.message}`, 'error');
+                        }
+                    }
+                    
+                    throw finalizeError;
+                }
                 
                 await pool.publish([relayUrl], event);
                 
@@ -1101,6 +1165,11 @@
                 updateServiceWorkerCount();
             } catch (error) {
                 log(`Registration failed: ${error.message}`, 'error');
+                // Additional context for debugging
+                log(`Error type: ${error.constructor.name}`, 'error');
+                if (error.stack) {
+                    log(`Stack trace: ${error.stack.substring(0, 500)}`, 'error');
+                }
             }
         }
 
