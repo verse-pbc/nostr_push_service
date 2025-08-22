@@ -24,13 +24,9 @@ use nostr_push_service::{
 use redis::AsyncCommands; // For direct Redis interaction
 use std::collections::HashSet; // Added for cache manipulation
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken; // For service shutdown
 use url::Url;
-
-// Global counter for unique test IDs
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Import service components and event type
 use nostr_push_service::{event_handler, nostr_listener};
@@ -47,9 +43,8 @@ async fn setup_test_environment() -> Result<(
 )> {
     dotenvy::dotenv().ok();
     
-    // Get a unique Redis database for this test
-    let test_db = common::get_test_redis_db();
-    let redis_url_constructed = common::create_test_redis_url(test_db);
+    // Use standard Redis URL (no database selection)
+    let redis_url_constructed = common::create_test_redis_url();
 
     // --- Safety Check: Prevent running tests against DigitalOcean Redis ---
     if let Ok(parsed_url) = url::Url::parse(&redis_url_constructed) {
@@ -97,8 +92,8 @@ async fn setup_test_environment() -> Result<(
         e
     })?;
 
-    // Clean the test database (only affects the isolated test DB)
-    common::setup_test_db(&redis_pool).await?;
+    // Optional: Clean Redis once at the start of all tests
+    // common::clean_redis_once(&redis_pool).await?;
 
     let mock_fcm_sender_instance = nostr_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone()); // Arc for returning
@@ -142,10 +137,10 @@ async fn setup_test_environment() -> Result<(
 async fn test_register_device_token() -> Result<()> {
     let (state, _fcm_mock, _relay_url, _mock_relay) = setup_test_environment().await?;
 
-    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let pubkey_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
-    let pubkey = PublicKey::from_hex(pubkey_hex)?;
-    let token = format!("test_token_for_registration_{}", test_id);
+    // Use unique test data for isolation
+    let pubkey_hex = common::generate_test_pubkey_hex();
+    let pubkey = PublicKey::from_hex(&pubkey_hex)?;
+    let token = common::generate_test_token("registration");
 
     nostr_push_service::redis_store::add_or_update_token(&state.redis_pool, &pubkey, &token).await?;
 

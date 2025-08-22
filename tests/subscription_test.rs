@@ -16,9 +16,7 @@ use tokio_util::sync::CancellationToken;
 async fn create_test_state() -> Arc<AppState> {
     dotenvy::dotenv().ok();
     
-    // Get a unique Redis database for this test
-    let test_db = common::get_test_redis_db();
-    let redis_url = &common::create_test_redis_url(test_db);
+    let redis_url = &common::create_test_redis_url();
     
     std::env::set_var(
         "NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX",

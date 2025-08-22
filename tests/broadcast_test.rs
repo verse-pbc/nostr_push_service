@@ -10,15 +10,12 @@ use nostr_push_service::{
     state::AppState,
 };
 use std::collections::HashSet;
-use std::env;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-// Global counter for unique test IDs
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Import service components
 use nostr_push_service::{event_handler, nostr_listener};
@@ -33,10 +30,8 @@ async fn setup_broadcast_test_environment() -> Result<(
     MockRelay,
 )> {
     dotenvy::dotenv().ok();
-    // Use REDIS_HOST and REDIS_PORT, falling back to defaults if not set
-    let redis_host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let redis_port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
-    let redis_url_constructed = format!("redis://{}:{}", redis_host, redis_port);
+    // Use standard Redis URL (no database selection)
+    let redis_url_constructed = common::create_test_redis_url();
 
     // --- Safety Check: Prevent running tests against DigitalOcean Redis ---
     if let Ok(parsed_url) = url::Url::parse(&redis_url_constructed) {
@@ -505,7 +500,7 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Create unique test ID for this test
-    let test_id_base = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_id_base = common::get_unique_test_id();
     
     // Create a large group with 50 members
     let large_group_id = format!("test_large_group_{}", test_id_base);
@@ -604,7 +599,7 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
 #[tokio::test]
 async fn test_broadcast_tag_detection() -> Result<()> {
     // Create unique test ID for this test
-    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_id = common::get_unique_test_id();
     
     // Create a test event with a broadcast tag
     let keys = Keys::generate();

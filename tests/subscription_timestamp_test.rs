@@ -10,14 +10,12 @@ use nostr_push_service::{
 };
 use std::env;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// Global counter for unique test IDs
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_test_id() -> String {
-    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let counter = common::get_unique_test_id();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -35,10 +33,8 @@ pub enum EventContext {
 /// Setup test state with mock FCM
 async fn setup_test_state() -> Result<(Arc<AppState>, Arc<nostr_push_service::fcm_sender::MockFcmSender>)> {
     dotenvy::dotenv().ok();
-    let redis_host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let redis_port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
     
-    let redis_url = format!("redis://{}:{}", redis_host, redis_port);
+    let redis_url = common::create_test_redis_url();
 
     // Safety check
     if let Ok(parsed_url) = url::Url::parse(&redis_url) {

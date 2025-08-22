@@ -11,15 +11,13 @@ use nostr_push_service::{
     state::AppState
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
-// Global counter for unique test IDs
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_test_id() -> String {
-    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let counter = common::get_unique_test_id();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -32,8 +30,7 @@ async fn create_test_state() -> Arc<AppState> {
     dotenvy::dotenv().ok();
     
     // Use test Redis instance
-    let test_db = common::get_test_redis_db();
-    let redis_url = &common::create_test_redis_url(test_db);
+    let redis_url = &common::create_test_redis_url();
     
     // Set test keys
     std::env::set_var("NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX", 
@@ -89,7 +86,7 @@ async fn test_dm_handler_sends_to_recipients() {
     let state = create_test_state().await;
     
     // Generate unique test ID
-    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_id = common::get_unique_test_id();
     
     // Create a DM event (kind 1059) with p-tags for recipients
     let sender_keys = Keys::generate();
@@ -193,7 +190,7 @@ async fn test_dm_handler_filters_only_p_tags() {
     let state = create_test_state().await;
     
     // Generate unique test ID
-    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_id = common::get_unique_test_id();
     
     let sender_keys = Keys::generate();
     let recipient_keys = Keys::generate();

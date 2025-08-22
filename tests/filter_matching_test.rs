@@ -11,15 +11,13 @@ use nostr_push_service::{
     state::AppState,
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
-// Counter for unique test tokens
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_test_id() -> String {
-    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let counter = common::get_unique_test_id();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -30,8 +28,7 @@ fn unique_test_id() -> String {
 async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
     dotenvy::dotenv().ok();
     
-    let test_db = common::get_test_redis_db();
-    let redis_url = &common::create_test_redis_url(test_db);
+    let redis_url = &common::create_test_redis_url();
     
     std::env::set_var(
         "NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX",
