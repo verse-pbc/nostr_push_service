@@ -522,6 +522,21 @@
             // Initialize Firebase
             await initializeFirebase();
             
+            // Register service worker early (once) to avoid duplicates
+            if ('serviceWorker' in navigator) {
+                try {
+                    let registration = await navigator.serviceWorker.getRegistration('/');
+                    if (!registration) {
+                        registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+                        log('Service worker registered during initialization', 'success');
+                    } else {
+                        log(`Service worker already registered (scope: ${registration.scope})`, 'info');
+                    }
+                } catch (err) {
+                    log(`Service worker registration failed: ${err.message}`, 'error');
+                }
+            }
+            
             // Connect to relay
             await connectToRelay();
             
@@ -1081,10 +1096,21 @@
                     throw new Error('Notification permission denied');
                 }
                 
-                // Register service worker and wait for it to be ready
-                const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
-                await navigator.serviceWorker.ready;
-                log('Service worker registered and ready', 'success');
+                // Get existing registration or register new service worker
+                let registration = await navigator.serviceWorker.getRegistration('/');
+                
+                if (!registration) {
+                    log('No existing service worker, registering new one...', 'info');
+                    registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+                    await navigator.serviceWorker.ready;
+                    log('New service worker registered and ready', 'success');
+                } else {
+                    log('Using existing service worker registration', 'success');
+                    // Check if it needs an update
+                    registration.update().catch(err => {
+                        log(`SW update check failed: ${err.message}`, 'warning');
+                    });
+                }
                 
                 if (messaging && vapidPublicKey) {
                     const token = await messaging.getToken({
@@ -1482,6 +1508,28 @@
             if ('serviceWorker' in navigator) {
                 const registrations = await navigator.serviceWorker.getRegistrations();
                 document.getElementById('swCount').textContent = registrations.length;
+                
+                // Log details about each registration if there are multiple
+                if (registrations.length > 1) {
+                    log(`WARNING: ${registrations.length} service workers registered!`, 'warning');
+                    registrations.forEach((reg, index) => {
+                        log(`SW ${index + 1}: scope=${reg.scope}, state=${reg.active?.state || 'no active worker'}`, 'warning');
+                    });
+                    
+                    // Clean up duplicates - keep only the one with scope '/'
+                    const mainReg = registrations.find(r => r.scope.endsWith('/'));
+                    for (const reg of registrations) {
+                        if (reg !== mainReg) {
+                            log(`Unregistering duplicate SW with scope: ${reg.scope}`, 'info');
+                            reg.unregister().then(() => {
+                                log(`Unregistered SW with scope: ${reg.scope}`, 'success');
+                                updateServiceWorkerCount(); // Update count after cleanup
+                            }).catch(err => {
+                                log(`Failed to unregister SW: ${err.message}`, 'error');
+                            });
+                        }
+                    }
+                }
             }
         }
 
