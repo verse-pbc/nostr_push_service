@@ -28,6 +28,7 @@ use url::Url;
 
 // Import service components and event type
 use plur_push_service::{event_handler, nostr_listener};
+use plur_push_service::event_handler::EventContext;
 use tokio::sync::mpsc; // Keep specific mpsc import for clarity
 
 // --- Test Relay Setup ---
@@ -182,7 +183,7 @@ async fn test_event_handling() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_test_environment().await?;
 
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();

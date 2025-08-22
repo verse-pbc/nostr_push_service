@@ -8,6 +8,7 @@
     <!-- PWA manifest and iOS support -->
     <link rel="manifest" href="/manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Plur Push">
     <link rel="apple-touch-icon" href="/icon-192x192.png">
@@ -295,9 +296,21 @@
         const relayUrl = 'wss://communities.nos.social';
         
         // Nostr tools functions (will be initialized after library loads)
-        let SimplePool, getPublicKey, generatePrivateKey, finalizeEvent, getEventHash;
+        let SimplePool, getPublicKey, generateSecretKey, finalizeEvent, getEventHash;
 
         // Auto-initialize on load
+        // Function to wait for NostrTools to load
+        async function waitForNostrTools(maxRetries = 10) {
+            for (let i = 0; i < maxRetries; i++) {
+                if (window.NostrTools) {
+                    return true;
+                }
+                log(`Waiting for NostrTools to load... (${i + 1}/${maxRetries})`, 'info');
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            return false;
+        }
+
         window.addEventListener('load', async () => {
             log('Initializing...', 'info');
             
@@ -317,12 +330,21 @@
                 document.getElementById('pushStatus').className = 'status-badge warning';
             }
             
+            // Wait for NostrTools to load (important for PWA mode)
+            const nostrLoaded = await waitForNostrTools();
+            if (!nostrLoaded) {
+                log('Failed to load NostrTools after retries', 'error');
+                document.getElementById('pubkey').textContent = 'Failed to load NostrTools';
+                document.getElementById('privkey').textContent = 'Try refreshing the page';
+                return;
+            }
+            
             // Initialize nostr-tools functions
             if (window.NostrTools) {
                 const tools = window.NostrTools;
                 SimplePool = tools.SimplePool;
                 getPublicKey = tools.getPublicKey;
-                generatePrivateKey = tools.generatePrivateKey;
+                generateSecretKey = tools.generateSecretKey;
                 finalizeEvent = tools.finishEvent || tools.finalizeEvent;
                 getEventHash = tools.getEventHash;
                 pool = new SimplePool();
@@ -343,6 +365,9 @@
             // Check registration status
             checkRegistrationStatus();
             
+            // Check subscription status (for buttons state)
+            await checkSubscriptionStatus();
+            
             // Subscribe to incoming events for debugging
             subscribeToIncomingEvents();
             
@@ -351,33 +376,54 @@
         });
 
         function generateKeys() {
-            // Check for existing key
-            const storedKey = localStorage.getItem('privateKey');
+            try {
+                // Debug: Check what's available
+                console.log('NostrTools:', window.NostrTools);
+                if (!window.NostrTools) {
+                    throw new Error('NostrTools not loaded');
+                }
+                console.log('Available functions:', Object.keys(window.NostrTools).sort());
+                
+                // Check for existing key
+                const storedKey = localStorage.getItem('privateKey');
             
             if (storedKey) {
                 // Stored as hex string
                 privateKey = storedKey;
                 // Get public key - both are hex strings
                 publicKey = window.NostrTools.getPublicKey(privateKey);
+                // npubEncode expects hex string directly!
                 const npub = window.NostrTools.nip19.npubEncode(publicKey);
                 log(`Restored existing keypair: ${npub.substring(0, 30)}...`, 'info');
             } else {
-                // Generate new key - in this version, returns hex string directly
-                privateKey = window.NostrTools.generatePrivateKey();
+                // Generate new key - generateSecretKey returns Uint8Array, convert to hex
+                const secretKeyBytes = window.NostrTools.generateSecretKey();
+                // Convert bytes to hex string
+                const bytesToHex = (bytes) => Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+                privateKey = bytesToHex(secretKeyBytes);
                 localStorage.setItem('privateKey', privateKey);
                 // Get public key - both are hex strings
                 publicKey = window.NostrTools.getPublicKey(privateKey);
+                // npubEncode expects hex string directly!
                 const npub = window.NostrTools.nip19.npubEncode(publicKey);
                 log(`Generated new keypair: ${npub.substring(0, 30)}...`, 'success');
             }
             
             // Convert to bech32 formats for display
-            const npub = window.NostrTools.nip19.npubEncode(publicKey);
-            const nsec = window.NostrTools.nip19.nsecEncode(privateKey);
+            // npubEncode expects hex string, nsecEncode expects bytes
+            const hexToBytes = (hex) => new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+            const npub = window.NostrTools.nip19.npubEncode(publicKey);  // hex string
+            const nsec = window.NostrTools.nip19.nsecEncode(hexToBytes(privateKey));  // bytes
             
             // Update UI with full keys for testing
             document.getElementById('pubkey').textContent = npub;
             document.getElementById('privkey').textContent = nsec;
+            } catch (error) {
+                console.error('Key generation error:', error);
+                log(`Key generation failed: ${error.message}`, 'error');
+                document.getElementById('pubkey').textContent = 'Error: ' + error.message;
+                document.getElementById('privkey').textContent = 'Error: ' + error.message;
+            }
         }
 
         async function initializeFirebase() {
@@ -408,7 +454,66 @@
                 }
                 
                 firebase.initializeApp(config);
-                messaging = firebase.messaging();
+                
+                // Check if we're in a secure context (required for service workers and notifications)
+                if (!window.isSecureContext) {
+                    log('⚠️ Not in secure context!', 'error');
+                    log(`Current URL: ${window.location.href}`, 'info');
+                    log('Push notifications require HTTPS or localhost', 'error');
+                    
+                    if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+                        log('Solutions:', 'info');
+                        log('1. Use the HTTPS ngrok URL', 'info');
+                        log('2. Or access via http://localhost:8000', 'info');
+                    }
+                    
+                    // Still try to initialize but it likely won't work
+                    messaging = null;
+                    document.getElementById('register').disabled = true;
+                    return false;
+                }
+                
+                // Initialize Firebase Messaging if service worker is available
+                if ('serviceWorker' in navigator) {
+                    try {
+                        messaging = firebase.messaging();
+                        log('Firebase Messaging initialized', 'success');
+                    } catch (e) {
+                        log(`Firebase Messaging init error: ${e.message}`, 'error');
+                        messaging = null;
+                        return false;
+                    }
+                } else {
+                    // Service worker not available - might be a timing issue in PWA
+                    log('Service Worker API not immediately available', 'warning');
+                    
+                    // If we're in a PWA, wait a bit for it to become available
+                    if (window.navigator.standalone) {
+                        log('PWA detected, waiting for Service Worker...', 'info');
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        if ('serviceWorker' in navigator) {
+                            try {
+                                messaging = firebase.messaging();
+                                log('Firebase Messaging initialized after wait', 'success');
+                            } catch (e) {
+                                log(`Firebase Messaging error: ${e.message}`, 'error');
+                                messaging = null;
+                                return false;
+                            }
+                        } else {
+                            log('Service Worker still not available', 'error');
+                            log('This should not happen in HTTPS context', 'error');
+                            messaging = null;
+                            return false;
+                        }
+                    } else {
+                        log('Service Worker not available', 'error');
+                        messaging = null;
+                        return false;
+                    }
+                }
+                
                 vapidPublicKey = config.vapidPublicKey;
                 
                 // Handle foreground messages
@@ -473,7 +578,7 @@
                     limit: 10
                 };
                 
-                const events = await pool.list([relayUrl], [filter]);
+                const events = await pool.querySync([relayUrl], filter);
                 
                 if (events && events.length > 0) {
                     // Sort by created_at to get the most recent event
@@ -542,7 +647,7 @@
                     limit: 10
                 };
                 
-                const events = await pool.list([relayUrl], [filter]);
+                const events = await pool.querySync([relayUrl], filter);
                 
                 if (events && events.length > 0) {
                     // Sort by created_at to get the most recent event
@@ -583,27 +688,146 @@
             }
         }
 
+        async function handleTokenRegistration(token) {
+            try {
+                currentFcmToken = token;
+                document.getElementById('fcmToken').textContent = token.substring(0, 20) + '...';
+                
+                // Send registration event
+                const event = finalizeEvent({
+                    kind: 3079,
+                    content: currentFcmToken,
+                    tags: [],
+                    created_at: Math.floor(Date.now() / 1000)
+                }, privateKey);
+
+                await pool.publish([relayUrl], event);
+                
+                // Save registration
+                localStorage.setItem('fcmToken', currentFcmToken);
+                localStorage.setItem('fcmTokenOwner', publicKey);
+                isRegistered = true;
+                updatePushUI(true);
+                
+                log('✅ Registration complete!', 'success');
+                updateRegistrationStatus();
+            } catch (error) {
+                log(`Registration error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+        
         async function registerForPush() {
             try {
                 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
                 const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
                 
+                // Debug: Log environment details
+                log('=== Environment Check ===', 'info');
+                log(`Platform: ${isIOS ? 'iOS' : 'non-iOS'}`, 'info');
+                log(`Mode: ${isStandalone ? 'PWA/Standalone' : 'Browser'}`, 'info');
+                log(`URL: ${window.location.href}`, 'info');
+                log(`Secure Context: ${window.isSecureContext ? '✅ YES' : '❌ NO'}`, 'info');
+                
+                // Check API availability
+                log('=== API Availability ===', 'info');
+                log(`Notification: ${'Notification' in window ? '✅ YES' : '❌ NO'}`, 'info');
+                log(`PushManager: ${'PushManager' in window ? '✅ YES' : '❌ NO'}`, 'info');
+                log(`ServiceWorker: ${'serviceWorker' in navigator ? '✅ YES' : '❌ NO'}`, 'info');
+                
+                // Check if we're in secure context
+                if (!window.isSecureContext) {
+                    log('❌ Not in secure context - APIs won\'t be available!', 'error');
+                    log('Use HTTPS URL or http://localhost', 'error');
+                    return;
+                }
+                
+                // Check iframe (ngrok warning)
+                if (window !== window.top) {
+                    log('⚠️ Page in iframe - might be ngrok warning', 'warning');
+                    log('Click "Visit Site" if you see ngrok page', 'info');
+                }
+                
                 // Check for Notification API support
                 if (!('Notification' in window)) {
-                    log('Push notifications not supported', 'error');
+                    log('Notification API not found', 'error');
+                    
+                    // Check if we're on an insecure context
+                    if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+                        log('⚠️ HTTPS required for notifications!', 'error');
+                        log(`You're using: ${window.location.protocol}//${window.location.hostname}`, 'info');
+                        log('Options:', 'info');
+                        log('1. Use http://localhost:8000 instead', 'info');
+                        log('2. Set up HTTPS for this domain', 'info');
+                    } else {
+                        log('iOS requires Safari 16.4+ for push notifications', 'info');
+                        log('Please update iOS/Safari if on older version', 'info');
+                    }
                     return;
                 }
                 
-                // iOS Safari requires PWA mode
-                if (isIOS && !isStandalone) {
-                    log('Please add to Home Screen first for push notifications on iOS', 'error');
-                    log('Tap Share → Add to Home Screen, then open from home screen', 'info');
+                // Additional check for push manager
+                if (!('PushManager' in window)) {
+                    log('PushManager not available', 'error');
+                    log('Web Push might not be supported in this browser', 'info');
                     return;
                 }
                 
-                // Check browser support
-                if (!('serviceWorker' in navigator)) {
+                // iOS-specific push notification requirements
+                if (isIOS) {
+                    log('=== iOS Push Requirements ===', 'info');
+                    
+                    if (!isStandalone) {
+                        // Safari browser - push NOT supported on iOS
+                        log('❌ iOS Safari browser - Push not available here', 'error');
+                        log('iOS requires PWA mode for push notifications:', 'info');
+                        log('1. Tap Share button (box with arrow)', 'info');
+                        log('2. Select "Add to Home Screen"', 'info');
+                        log('3. Open app from home screen', 'info');
+                        log('4. Register for push from the PWA', 'info');
+                        return;
+                    }
+                    
+                    // In PWA mode - push should work!
+                    log('✅ iOS PWA mode - Push supported!', 'success');
+                    
+                    // Double-check service worker availability
+                    if (!('serviceWorker' in navigator)) {
+                        log('⚠️ Service Worker not found in iOS PWA', 'error');
+                        log('Ensure you\'re using HTTPS!', 'error');
+                        log(`Current context secure: ${window.isSecureContext}`, 'info');
+                        
+                        // Wait and retry once
+                        log('Waiting 2 seconds and retrying...', 'info');
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        
+                        if (!('serviceWorker' in navigator)) {
+                            log('❌ Service Worker still unavailable', 'error');
+                            return;
+                        }
+                        log('✅ Service Worker now available!', 'success');
+                    }
+                }
+                
+                // Check browser support - in PWA mode, serviceWorker might not be immediately available
+                let serviceWorkerAvailable = 'serviceWorker' in navigator;
+                
+                // If in PWA mode and service worker not available, wait a bit
+                if (!serviceWorkerAvailable && window.navigator.standalone) {
+                    log('Waiting for service worker API...', 'info');
+                    for (let i = 0; i < 10; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        if ('serviceWorker' in navigator) {
+                            serviceWorkerAvailable = true;
+                            log('Service worker API now available', 'success');
+                            break;
+                        }
+                    }
+                }
+                
+                if (!serviceWorkerAvailable) {
                     log('Service workers not supported', 'error');
+                    log('Try closing and reopening the app', 'info');
                     return;
                 }
                 
@@ -629,11 +853,10 @@
                         vapidKey: vapidPublicKey,
                         serviceWorkerRegistration: registration
                     });
-                        
-                        if (token) {
-                            currentFcmToken = token;
-                            document.getElementById('fcmToken').textContent = token.substring(0, 20) + '...';
-                        }
+                    
+                    if (token) {
+                        currentFcmToken = token;
+                        document.getElementById('fcmToken').textContent = token.substring(0, 20) + '...';
                     }
                 }
                 
@@ -714,12 +937,11 @@
                 
                 await pool.publish([relayUrl], event);
                 
-                localStorage.setItem('isSubscribed', 'true');
-                isSubscribed = true;
-                updateSubUI(true);
-                
                 log('📥 Subscribed to receive push notifications for ALL kind 9 (chat) events', 'success');
                 log('Filter: ' + JSON.stringify(filter), 'info');
+                
+                // Check actual subscription status from relay
+                setTimeout(() => checkSubscriptionStatus(), 1000);
             } catch (error) {
                 log(`Subscription failed: ${error.message}`, 'error');
             }
@@ -738,11 +960,10 @@
                 
                 await pool.publish([relayUrl], event);
                 
-                localStorage.removeItem('isSubscribed');
-                isSubscribed = false;
-                updateSubUI(false);
-                
                 log('Unsubscribed from chats', 'success');
+                
+                // Check actual subscription status from relay
+                setTimeout(() => checkSubscriptionStatus(), 1000);
             } catch (error) {
                 log(`Unsubscribe failed: ${error.message}`, 'error');
             }
@@ -750,14 +971,13 @@
 
         function subscribeToIncomingEvents() {
             // Subscribe to kind 9 events to see if they arrive
-            const sub = pool.sub([relayUrl], [
+            const sub = pool.subscribeMany([relayUrl], [
                 {
                     kinds: [9],
                     limit: 10
                 }
-            ]);
-            
-            sub.on('event', event => {
+            ], {
+                onevent(event) {
                 const authorNpub = window.NostrTools.nip19.npubEncode(event.pubkey);
                 const isOwnEvent = event.pubkey === publicKey;
                 
@@ -770,6 +990,7 @@
                     if (mentionedPubkeys.includes(publicKey)) {
                         log(`🔔 You were mentioned in this event!`, 'success');
                     }
+                }
                 }
             });
             
@@ -877,6 +1098,53 @@
             } else {
                 badge.textContent = 'Not Registered';
                 badge.className = 'status-badge inactive';
+            }
+        }
+
+        async function checkSubscriptionStatus() {
+            if (!publicKey || !pool) {
+                log('Cannot check subscription status - no key or pool', 'warning');
+                return;
+            }
+            
+            log('Checking subscription status...', 'info');
+            
+            try {
+                // Query for the user's subscription events (kinds 3081 and 3082)
+                // 3081 = subscription upsert, 3082 = subscription delete
+                const events = await pool.querySync([relayUrl], {
+                    authors: [publicKey],
+                    kinds: [3081, 3082],
+                    limit: 10
+                });
+                
+                if (events.length === 0) {
+                    log('No subscription events found', 'info');
+                    updateSubUI(false);
+                    return;
+                }
+                
+                // Sort by created_at to get the most recent event
+                events.sort((a, b) => b.created_at - a.created_at);
+                const latestEvent = events[0];
+                
+                // Kind 3081 = subscribe, Kind 3082 = unsubscribe
+                const isSubscribed = latestEvent.kind === 3081;
+                
+                log(`Latest subscription event: kind ${latestEvent.kind} at ${new Date(latestEvent.created_at * 1000).toLocaleString()}`, 'info');
+                
+                if (isSubscribed) {
+                    // Check what filters they're subscribed to
+                    const filterTag = latestEvent.tags.find(tag => tag[0] === 'filter');
+                    if (filterTag) {
+                        log(`Subscribed with filter: ${filterTag[1]}`, 'info');
+                    }
+                }
+                
+                updateSubUI(isSubscribed);
+                
+            } catch (error) {
+                log(`Error checking subscription status: ${error.message}`, 'error');
             }
         }
 

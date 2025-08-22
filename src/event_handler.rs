@@ -38,7 +38,7 @@ const REPLAY_HORIZON_DAYS: u64 = 7;
 
 pub async fn run(
     state: Arc<AppState>,
-    mut event_rx: Receiver<Box<Event>>,
+    mut event_rx: Receiver<(Box<Event>, EventContext)>,
     token: CancellationToken,
 ) -> Result<()> {
     tracing::info!("Starting event handler...");
@@ -52,7 +52,7 @@ pub async fn run(
             }
 
             maybe_event = event_rx.recv() => {
-                let Some(event) = maybe_event else {
+                let Some((event, context)) = maybe_event else {
                     info!("Event channel closed. Event handler shutting down.");
                     break;
                 };
@@ -61,7 +61,7 @@ pub async fn run(
                 let event_kind = event.kind;
                 let pubkey = event.pubkey;
 
-                debug!(event_id = %event_id, kind = %event_kind, pubkey = %pubkey, "Event handler received event");
+                debug!(event_id = %event_id, kind = %event_kind, pubkey = %pubkey, context = ?context, "Event handler received event");
 
                 // Check replay horizon - ignore events that are too old
                 if is_event_too_old(&event) {
@@ -108,12 +108,12 @@ pub async fn run(
                     // Handle group messages (mentions and group members)
                     let group_result = handle_group_message(&state, &event, token.clone()).await;
                     // Also check custom subscriptions for kind 9/10 events
-                    let subscription_result = handle_custom_subscriptions(&state, &event, token.clone()).await;
+                    let subscription_result = handle_custom_subscriptions(&state, &event, context, token.clone()).await;
                     // Return the first error if any, otherwise Ok
                     group_result.and(subscription_result)
                 } else {
                     // For all other kinds, check user subscriptions
-                    handle_custom_subscriptions(&state, &event, token.clone()).await
+                    handle_custom_subscriptions(&state, &event, context, token.clone()).await
                 };
 
                 match handler_result {
@@ -690,6 +690,7 @@ async fn send_notification_to_user(
 pub async fn handle_custom_subscriptions(
     state: &AppState,
     event: &Event,
+    context: EventContext,
     token: CancellationToken,
 ) -> Result<()> {
     debug!(event_id = %event.id, kind = %event.kind, "Handling event with custom subscriptions");
@@ -739,14 +740,14 @@ pub async fn handle_custom_subscriptions(
         let event_timestamp = event.created_at.as_u64();
         
         for (filter_json, subscription_timestamp) in subscriptions_with_timestamps {
-            // Skip if event is older than subscription
-            if event_timestamp < subscription_timestamp {
+            // Skip if event is older than subscription (only for historical events)
+            if matches!(context, EventContext::Historical) && event_timestamp < subscription_timestamp {
                 trace!(
                     event_id = %event.id, 
                     user = %user_pubkey, 
                     event_time = event_timestamp,
                     subscription_time = subscription_timestamp,
-                    "Event predates subscription, skipping"
+                    "Historical event predates subscription, skipping"
                 );
                 continue;
             }

@@ -73,36 +73,6 @@ async fn setup_test_state() -> Result<(Arc<AppState>, Arc<plur_push_service::fcm
     Ok((Arc::new(app_state), mock_fcm_arc))
 }
 
-/// Setup test state with existing Redis pool
-async fn setup_test_state_with_redis(redis_pool: &RedisPool) -> Result<(Arc<AppState>, Arc<plur_push_service::fcm_sender::MockFcmSender>)> {
-    let mut settings = Settings::new()?;
-    settings.nostr.relay_url = "wss://test.relay".to_string();
-
-    let mock_fcm = plur_push_service::fcm_sender::MockFcmSender::new();
-    let mock_fcm_arc = Arc::new(mock_fcm.clone());
-    let fcm_client = Arc::new(plur_push_service::fcm_sender::FcmClient::new_with_impl(
-        Box::new(mock_fcm),
-    ));
-
-    let test_keys = Keys::generate();
-    let nip29_client = plur_push_service::nostr::nip29::Nip29Client::new(
-        settings.nostr.relay_url.clone(),
-        test_keys.clone(),
-        300,
-    )
-    .await?;
-
-    let app_state = AppState {
-        settings,
-        redis_pool: redis_pool.clone(),
-        fcm_client,
-        service_keys: Some(test_keys),
-        nip29_client: Arc::new(nip29_client),
-    };
-
-    Ok((Arc::new(app_state), mock_fcm_arc))
-}
-
 /// Register user FCM token
 async fn register_user_token(state: &Arc<AppState>, user_keys: &Keys, token: &str) -> Result<()> {
     redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), token).await?;
@@ -145,8 +115,9 @@ async fn process_event_with_context(
         let subscriptions = redis_store::get_subscriptions_with_timestamps(&state.redis_pool, &user_pubkey).await?;
         
         for (filter_json, subscription_timestamp) in subscriptions {
-            // Check timestamp - skip if event is older than subscription
-            if event.created_at.as_u64() < subscription_timestamp {
+            // Check timestamp - skip if event is older than subscription (only for historical events)
+            let event_time = event.created_at.as_u64();
+            if matches!(context, EventContext::Historical) && event_time < subscription_timestamp {
                 continue;
             }
             
@@ -395,15 +366,15 @@ async fn test_subscription_filter_with_multiple_users() -> anyhow::Result<()> {
     
     // User 3 has no subscription
     
-    // Process the event
+    // Process the event as HISTORICAL - this tests the timestamp filtering
     let result = process_event_with_context(
         &state,
         &event,
-        EventContext::Live,
+        EventContext::Historical,
     ).await?;
     
     // We expect only user1 to be notified (subscribed before the event)
-    assert_eq!(result, 1, "Only user1 should be notified");
+    assert_eq!(result, 1, "Only user1 should be notified for historical events");
     
     Ok(())
 }

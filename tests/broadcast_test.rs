@@ -16,6 +16,7 @@ use url::Url;
 
 // Import service components
 use plur_push_service::{event_handler, nostr_listener};
+use plur_push_service::event_handler::EventContext;
 use tokio::sync::mpsc;
 
 /// Test environment setup, similar to integration_test.rs but focused on broadcast tests
@@ -203,7 +204,7 @@ async fn test_broadcast_notifications() -> Result<()> {
 
     // Set up service with event handler and listener
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     // Start nostr listener
     let listener_state = state.clone();
@@ -331,7 +332,7 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
 
     // Set up service
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();
@@ -485,7 +486,7 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
 
     // Set up service
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();
@@ -663,7 +664,7 @@ async fn test_admin_permission_verification() -> Result<()> {
 
     // Set up service
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();
@@ -793,7 +794,7 @@ async fn test_event_kind_filtering() -> Result<()> {
 
     // Set up service
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();

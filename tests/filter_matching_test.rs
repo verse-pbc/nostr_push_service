@@ -87,7 +87,7 @@ async fn test_filter_matches_kind() {
     
     // Handle the event with custom subscriptions
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
     // User should receive notification
@@ -119,7 +119,7 @@ async fn test_filter_matches_author() {
         .unwrap();
     
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
 }
@@ -149,7 +149,7 @@ async fn test_filter_no_match() {
         .unwrap();
     
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
     // User should NOT receive notification
@@ -175,7 +175,7 @@ async fn test_default_behavior_mentions() {
         .unwrap();
     
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
     // User should receive notification due to mention (default behavior)
@@ -211,7 +211,7 @@ async fn test_multiple_matching_filters() {
         .unwrap();
     
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
     // User should receive notification (only once despite multiple matches)
