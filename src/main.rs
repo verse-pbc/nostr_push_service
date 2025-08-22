@@ -150,6 +150,24 @@ async fn serve_manifest() -> impl IntoResponse {
     )
 }
 
+async fn serve_icon_192() -> impl IntoResponse {
+    const ICON: &[u8] = include_bytes!("../frontend/icon-192x192.png");
+    (
+        StatusCode::OK,
+        [("Content-Type", "image/png")],
+        ICON
+    )
+}
+
+async fn serve_icon_512() -> impl IntoResponse {
+    const ICON: &[u8] = include_bytes!("../frontend/icon-512x512.png");
+    (
+        StatusCode::OK,
+        [("Content-Type", "image/png")],
+        ICON
+    )
+}
+
 async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
     let app = Router::new()
         .route("/", get(serve_frontend))
@@ -158,6 +176,8 @@ async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
         .route("/config/fcm.json", get(serve_fcm_config))
         // nostr.bundle.js now served from CDN
         .route("/manifest.json", get(serve_manifest))
+        .route("/icon-192x192.png", get(serve_icon_192))
+        .route("/icon-512x512.png", get(serve_icon_512))
         .route("/health", get(health_check));
 
     let listen_addr_str = &app_state.settings.server.listen_addr;
@@ -219,7 +239,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tracker = SimpleTaskTracker::new();
     let token = CancellationToken::new();
 
-    let (nostr_event_tx, nostr_event_rx) = tokio::sync::mpsc::channel::<Box<Event>>(1000);
+    let (nostr_event_tx, nostr_event_rx) = tokio::sync::mpsc::channel::<(Box<Event>, event_handler::EventContext)>(1000);
 
     let state_nostr = Arc::clone(&app_state);
     let token_nostr = token.clone();

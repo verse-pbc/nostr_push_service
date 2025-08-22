@@ -1,4 +1,5 @@
 use nostr_sdk::prelude::*;
+use serial_test::serial;
 use plur_push_service::{
     config::Settings, 
     event_handler, 
@@ -8,7 +9,21 @@ use plur_push_service::{
     state::AppState
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
+
+// Global counter for unique test IDs
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn unique_test_id() -> String {
+    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    format!("{}_{}", timestamp, counter)
+}
 
 async fn create_test_state() -> Arc<AppState> {
     // Setup test environment
@@ -61,16 +76,19 @@ async fn create_test_state() -> Arc<AppState> {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
+    // Flush Redis DB for test isolation (tests run serially)
     let mut conn = pool.get().await?;
-    redis::cmd("FLUSHDB")
-        .query_async::<()>(&mut *conn)
-        .await?;
+    redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
     Ok(())
 }
 
 #[tokio::test]
+#[serial]
 async fn test_dm_handler_sends_to_recipients() {
     let state = create_test_state().await;
+    
+    // Generate unique test ID
+    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     
     // Create a DM event (kind 1059) with p-tags for recipients
     let sender_keys = Keys::generate();
@@ -85,11 +103,14 @@ async fn test_dm_handler_sends_to_recipients() {
         .await
         .unwrap();
     
-    // Register tokens for recipients
+    // Register tokens for recipients with unique IDs
+    let token1 = format!("test_token_1_{}", test_id);
+    let token2 = format!("test_token_2_{}", test_id);
+    
     redis_store::add_or_update_token(
         &state.redis_pool,
         &recipient1_keys.public_key(),
-        "test_token_1",
+        &token1,
     )
     .await
     .unwrap();
@@ -97,7 +118,7 @@ async fn test_dm_handler_sends_to_recipients() {
     redis_store::add_or_update_token(
         &state.redis_pool,
         &recipient2_keys.public_key(),
-        "test_token_2",
+        &token2,
     )
     .await
     .unwrap();
@@ -112,6 +133,7 @@ async fn test_dm_handler_sends_to_recipients() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_dm_handler_skips_sender() {
     let state = create_test_state().await;
     
@@ -126,11 +148,12 @@ async fn test_dm_handler_skips_sender() {
         .await
         .unwrap();
     
-    // Register token for sender (should be skipped)
+    // Register token for sender (should be skipped) with unique ID
+    let sender_token = format!("sender_token_{}", unique_test_id());
     redis_store::add_or_update_token(
         &state.redis_pool,
         &sender_keys.public_key(),
-        "sender_token",
+        &sender_token,
     )
     .await
     .unwrap();
@@ -144,6 +167,7 @@ async fn test_dm_handler_skips_sender() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_dm_handler_no_recipients_with_tokens() {
     let state = create_test_state().await;
     
@@ -166,8 +190,12 @@ async fn test_dm_handler_no_recipients_with_tokens() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_dm_handler_filters_only_p_tags() {
     let state = create_test_state().await;
+    
+    // Generate unique test ID
+    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     
     let sender_keys = Keys::generate();
     let recipient_keys = Keys::generate();
@@ -181,10 +209,11 @@ async fn test_dm_handler_filters_only_p_tags() {
         .await
         .unwrap();
     
+    let test_token = format!("test_token_{}", test_id);
     redis_store::add_or_update_token(
         &state.redis_pool,
         &recipient_keys.public_key(),
-        "test_token",
+        &test_token,
     )
     .await
     .unwrap();

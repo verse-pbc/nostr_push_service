@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
-use bb8_redis::bb8;
 use nostr_relay_builder::MockRelay;
+use serial_test::serial;
 use nostr_sdk::{ClientBuilder, Event, EventBuilder, Keys, Kind, PublicKey, Tag, ToBech32};
 use plur_push_service::{
     config::Settings,
@@ -10,12 +10,17 @@ use plur_push_service::{
 use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+// Global counter for unique test IDs
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 // Import service components
 use plur_push_service::{event_handler, nostr_listener};
+use plur_push_service::event_handler::EventContext;
 use tokio::sync::mpsc;
 
 /// Test environment setup, similar to integration_test.rs but focused on broadcast tests
@@ -117,16 +122,11 @@ async fn setup_broadcast_test_environment() -> Result<(
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> Result<()> {
-    let mut conn = pool
-        .get()
-        .await
-        .map_err(|e: bb8::RunError<redis::RedisError>| {
-            anyhow!("Failed to get Redis connection: {}", e)
-        })?;
+    // Flush Redis DB for test isolation (tests run serially)
+    let mut conn = pool.get().await?;
     redis::cmd("FLUSHDB")
         .query_async::<()>(&mut *conn)
-        .await
-        .map_err(|e: redis::RedisError| anyhow!("Failed to flush Redis DB: {}", e))?;
+        .await?;
     Ok(())
 }
 
@@ -198,12 +198,13 @@ async fn setup_test_group_with_admin(
 
 /// Test 1: Verify broadcast messages send notifications to all group members
 #[tokio::test]
+#[serial]
 async fn test_broadcast_notifications() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 
     // Set up service with event handler and listener
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     // Start nostr listener
     let listener_state = state.clone();
@@ -253,9 +254,9 @@ async fn test_broadcast_notifications() -> Result<()> {
     let token2 = "fcm_token_user2_broadcast";
     let token3 = "fcm_token_user3_broadcast";
 
-    register_user_token(&state, &user1_keys, &user1_client, token1).await?;
-    register_user_token(&state, &user2_keys, &user2_client, token2).await?;
-    register_user_token(&state, &user3_keys, &user3_client, token3).await?;
+    register_user_token(&state, &user1_keys, &user1_client, &token1).await?;
+    register_user_token(&state, &user2_keys, &user2_client, &token2).await?;
+    register_user_token(&state, &user3_keys, &user3_client, &token3).await?;
 
     // Define admins and members
     let mut admins = HashSet::new();
@@ -271,7 +272,7 @@ async fn test_broadcast_notifications() -> Result<()> {
     setup_test_group_with_admin(&state, group_id, admins.clone(), members.clone()).await?;
 
     // Send a broadcast message
-    let group_tag = Tag::parse(["h", group_id])?;
+    let group_tag = Tag::parse(["h", &group_id])?;
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let message_content = "This is a broadcast message to the group";
 
@@ -326,12 +327,13 @@ async fn test_broadcast_notifications() -> Result<()> {
 
 /// Test 2: Verify regular mention-based notifications still work alongside broadcast
 #[tokio::test]
+#[serial]
 async fn test_regular_mentions_with_broadcast() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 
     // Set up service
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();
@@ -379,9 +381,9 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
     let token2 = "fcm_token_user2_mention";
     let token3 = "fcm_token_user3_mention";
 
-    register_user_token(&state, &user1_keys, &user1_client, token1).await?;
-    register_user_token(&state, &user2_keys, &user2_client, token2).await?;
-    register_user_token(&state, &user3_keys, &user3_client, token3).await?;
+    register_user_token(&state, &user1_keys, &user1_client, &token1).await?;
+    register_user_token(&state, &user2_keys, &user2_client, &token2).await?;
+    register_user_token(&state, &user3_keys, &user3_client, &token3).await?;
 
     // Define admins and members
     let mut admins = HashSet::new();
@@ -397,7 +399,7 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
     setup_test_group_with_admin(&state, group_id, admins.clone(), members.clone()).await?;
 
     // 1. Send a regular mention-based message (mentions user1 only)
-    let group_tag = Tag::parse(["h", group_id])?;
+    let group_tag = Tag::parse(["h", &group_id])?;
     let mention_tag = Tag::public_key(user1_keys.public_key());
     let message_content = format!("Hello @{}", user1_keys.public_key().to_bech32()?);
 
@@ -480,12 +482,13 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
 
 /// Test 3: Performance test with large groups
 #[tokio::test]
+#[serial]
 async fn test_broadcast_performance_large_group() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 
     // Set up service
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();
@@ -505,8 +508,11 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
+    // Create unique test ID for this test
+    let test_id_base = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    
     // Create a large group with 50 members
-    let large_group_id = "test_large_group";
+    let large_group_id = format!("test_large_group_{}", test_id_base);
     let sender_keys = Keys::generate();
     let sender_client = ClientBuilder::new().signer(sender_keys.clone()).build();
     sender_client.add_relay(relay_url.as_str()).await?;
@@ -524,7 +530,7 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
         user_client.add_relay(relay_url.as_str()).await?;
         user_client.connect().await;
 
-        let token = format!("fcm_token_large_group_user{}", i);
+        let token = format!("fcm_token_large_group_user{}_{}", i, test_id_base);
         register_user_token(&state, &user_keys, &user_client, &token).await?;
 
         group_members.insert(user_keys.public_key());
@@ -550,14 +556,14 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
     // Set up large test group using AppState
     setup_test_group_with_admin(
         &state,
-        large_group_id,
+        &large_group_id,
         admins.clone(),
         group_members.clone(),
     )
     .await?;
 
     // Send a broadcast message to the large group
-    let group_tag = Tag::parse(["h", large_group_id])?;
+    let group_tag = Tag::parse(["h", &large_group_id])?;
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let message_content = "This is a broadcast message to a large group";
 
@@ -600,11 +606,15 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
 
 /// Test 4: Direct broadcast tag test to ensure proper tag detection
 #[tokio::test]
+#[serial]
 async fn test_broadcast_tag_detection() -> Result<()> {
+    // Create unique test ID for this test
+    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    
     // Create a test event with a broadcast tag
     let keys = Keys::generate();
-    let group_id = "test_tag_detection_group";
-    let group_tag = Tag::parse(["h", group_id])?;
+    let group_id = format!("test_tag_detection_group_{}", test_id);
+    let group_tag = Tag::parse(["h", &group_id])?;
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let message_content = "This is a test broadcast message";
 
@@ -658,12 +668,13 @@ async fn test_broadcast_tag_detection() -> Result<()> {
 
 /// Test 5: Admin permission verification for broadcast messages
 #[tokio::test]
+#[serial]
 async fn test_admin_permission_verification() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 
     // Set up service
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();
@@ -706,7 +717,7 @@ async fn test_admin_permission_verification() -> Result<()> {
 
     // Register FCM token for member (to receive notifications)
     let member_token = "fcm_token_group_member";
-    register_user_token(&state, &member_keys, &member_client, member_token).await?;
+    register_user_token(&state, &member_keys, &member_client, &member_token).await?;
 
     // Define admins and members
     let mut admins = HashSet::new();
@@ -721,7 +732,7 @@ async fn test_admin_permission_verification() -> Result<()> {
     setup_test_group_with_admin(&state, group_id, admins.clone(), members.clone()).await?;
 
     // 1. Test broadcast from admin user (should work)
-    let group_tag = Tag::parse(["h", group_id])?;
+    let group_tag = Tag::parse(["h", &group_id])?;
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let admin_message = "Admin broadcast message";
 
@@ -788,12 +799,13 @@ async fn test_admin_permission_verification() -> Result<()> {
 
 /// Test 6: Event kind filtering for broadcast messages
 #[tokio::test]
+#[serial]
 async fn test_event_kind_filtering() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 
     // Set up service
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();
@@ -830,7 +842,7 @@ async fn test_event_kind_filtering() -> Result<()> {
 
     // Register FCM token for member
     let member_token = "fcm_token_kind_filter_member";
-    register_user_token(&state, &member_keys, &member_client, member_token).await?;
+    register_user_token(&state, &member_keys, &member_client, &member_token).await?;
 
     // Define admins and members
     let mut admins = HashSet::new();
@@ -843,7 +855,7 @@ async fn test_event_kind_filtering() -> Result<()> {
     // Set up test group
     setup_test_group_with_admin(&state, group_id, admins.clone(), members.clone()).await?;
 
-    let group_tag = Tag::parse(["h", group_id])?;
+    let group_tag = Tag::parse(["h", &group_id])?;
     let broadcast_tag = Tag::parse(["broadcast"])?;
 
     // 1. Test with ALLOWED kind 11 (broadcastable) - should send notification

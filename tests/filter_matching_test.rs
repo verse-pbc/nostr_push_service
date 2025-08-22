@@ -1,4 +1,5 @@
 use nostr_sdk::prelude::*;
+use serial_test::serial;
 use plur_push_service::{
     config::Settings,
     event_handler,
@@ -9,10 +10,20 @@ use plur_push_service::{
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
 // Counter for unique test tokens
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn unique_test_id() -> String {
+    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    format!("{}_{}", timestamp, counter)
+}
 
 async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
     dotenvy::dotenv().ok();
@@ -56,18 +67,20 @@ async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
+    // Flush Redis DB for test isolation (tests run serially)
     let mut conn = pool.get().await?;
     redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
     Ok(())
 }
 
 #[tokio::test]
+#[serial]
 async fn test_filter_matches_kind() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
     
     // Register token for user with unique ID
-    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    let token = format!("test_token_{}", unique_test_id());
     redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
@@ -87,20 +100,21 @@ async fn test_filter_matches_kind() {
     
     // Handle the event with custom subscriptions
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
     // User should receive notification
 }
 
 #[tokio::test]
+#[serial]
 async fn test_filter_matches_author() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
     let author_keys = Keys::generate();
     
     // Register token with unique ID for each test
-    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    let token = format!("test_token_{}", unique_test_id());
     redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
@@ -119,18 +133,19 @@ async fn test_filter_matches_author() {
         .unwrap();
     
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
 }
 
 #[tokio::test]
+#[serial]
 async fn test_filter_no_match() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
     
     // Register token with unique ID for each test
-    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    let token = format!("test_token_{}", unique_test_id());
     redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
@@ -149,20 +164,21 @@ async fn test_filter_no_match() {
         .unwrap();
     
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
     // User should NOT receive notification
 }
 
 #[tokio::test]
+#[serial]
 async fn test_default_behavior_mentions() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
     let sender_keys = Keys::generate();
     
     // Register token but NO subscriptions
-    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    let token = format!("test_token_{}", unique_test_id());
     redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
@@ -175,20 +191,21 @@ async fn test_default_behavior_mentions() {
         .unwrap();
     
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
     // User should receive notification due to mention (default behavior)
 }
 
 #[tokio::test]
+#[serial]
 async fn test_multiple_matching_filters() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
     let author_keys = Keys::generate();
     
     // Register token with unique ID for each test
-    let token = format!("test_token_{}", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    let token = format!("test_token_{}", unique_test_id());
     redis_store::add_or_update_token(&state.redis_pool, &user_keys.public_key(), &token)
         .await
         .unwrap();
@@ -211,7 +228,7 @@ async fn test_multiple_matching_filters() {
         .unwrap();
     
     let token = CancellationToken::new();
-    let result = event_handler::handle_custom_subscriptions(&state, &event, token).await;
+    let result = event_handler::handle_custom_subscriptions(&state, &event, event_handler::EventContext::Live, token).await;
     
     assert!(result.is_ok());
     // User should receive notification (only once despite multiple matches)

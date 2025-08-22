@@ -15,6 +15,15 @@ use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, trace, warn};
 
+/// Context for event processing to distinguish historical from live events
+#[derive(Debug, Clone, Copy)]
+pub enum EventContext {
+    /// Historical event being replayed (e.g., during startup or reconnection)
+    Historical,
+    /// Live event received in real-time
+    Live,
+}
+
 const KIND_REGISTRATION: Kind = Kind::Custom(3079);
 const KIND_DEREGISTRATION: Kind = Kind::Custom(3080);
 const KIND_SUBSCRIPTION_UPSERT: Kind = Kind::Custom(3081);
@@ -29,7 +38,7 @@ const REPLAY_HORIZON_DAYS: u64 = 7;
 
 pub async fn run(
     state: Arc<AppState>,
-    mut event_rx: Receiver<Box<Event>>,
+    mut event_rx: Receiver<(Box<Event>, EventContext)>,
     token: CancellationToken,
 ) -> Result<()> {
     tracing::info!("Starting event handler...");
@@ -43,7 +52,7 @@ pub async fn run(
             }
 
             maybe_event = event_rx.recv() => {
-                let Some(event) = maybe_event else {
+                let Some((event, context)) = maybe_event else {
                     info!("Event channel closed. Event handler shutting down.");
                     break;
                 };
@@ -52,7 +61,7 @@ pub async fn run(
                 let event_kind = event.kind;
                 let pubkey = event.pubkey;
 
-                debug!(event_id = %event_id, kind = %event_kind, pubkey = %pubkey, "Event handler received event");
+                debug!(event_id = %event_id, kind = %event_kind, pubkey = %pubkey, context = ?context, "Event handler received event");
 
                 // Check replay horizon - ignore events that are too old
                 if is_event_too_old(&event) {
@@ -99,12 +108,12 @@ pub async fn run(
                     // Handle group messages (mentions and group members)
                     let group_result = handle_group_message(&state, &event, token.clone()).await;
                     // Also check custom subscriptions for kind 9/10 events
-                    let subscription_result = handle_custom_subscriptions(&state, &event, token.clone()).await;
+                    let subscription_result = handle_custom_subscriptions(&state, &event, context, token.clone()).await;
                     // Return the first error if any, otherwise Ok
                     group_result.and(subscription_result)
                 } else {
                     // For all other kinds, check user subscriptions
-                    handle_custom_subscriptions(&state, &event, token.clone()).await
+                    handle_custom_subscriptions(&state, &event, context, token.clone()).await
                 };
 
                 match handler_result {
@@ -279,10 +288,21 @@ pub async fn handle_subscription_upsert(
         crate::error::ServiceError::Internal(format!("Failed to serialize filter: {}", e))
     })?;
 
-    // Store the subscription
-    redis_store::add_subscription(&state.redis_pool, &event.pubkey, &filter_json).await?;
+    // Store the subscription with the current timestamp
+    let subscription_timestamp = event.created_at.as_u64();
+    redis_store::add_subscription_with_timestamp(
+        &state.redis_pool, 
+        &event.pubkey, 
+        &filter_json,
+        subscription_timestamp
+    ).await?;
 
-    info!(event_id = %event.id, pubkey = %event.pubkey, "Added/updated subscription");
+    info!(
+        event_id = %event.id, 
+        pubkey = %event.pubkey, 
+        timestamp = subscription_timestamp,
+        "Added/updated subscription with timestamp"
+    );
     Ok(())
 }
 
@@ -670,6 +690,7 @@ async fn send_notification_to_user(
 pub async fn handle_custom_subscriptions(
     state: &AppState,
     event: &Event,
+    context: EventContext,
     token: CancellationToken,
 ) -> Result<()> {
     debug!(event_id = %event.id, kind = %event.kind, "Handling event with custom subscriptions");
@@ -711,12 +732,28 @@ pub async fn handle_custom_subscriptions(
             continue;
         }
 
-        // Get user's subscriptions
-        let subscriptions = redis_store::get_subscriptions(&state.redis_pool, &user_pubkey).await?;
+        // Get user's subscriptions with timestamps
+        let subscriptions_with_timestamps = redis_store::get_subscriptions_with_timestamps(&state.redis_pool, &user_pubkey).await?;
 
-        // Check if event matches any subscription filter
+        // Check if event matches any subscription filter AND was created after subscription
         let mut matched = false;
-        for filter_json in subscriptions {
+        let event_timestamp = event.created_at.as_u64();
+        
+        for (filter_json, subscription_timestamp) in subscriptions_with_timestamps {
+            // For Live events: always check timestamps - don't send notifications for events that occurred before subscription
+            // For Historical events: also check timestamps during replay
+            if event_timestamp < subscription_timestamp {
+                trace!(
+                    event_id = %event.id, 
+                    user = %user_pubkey, 
+                    event_time = event_timestamp,
+                    subscription_time = subscription_timestamp,
+                    context = ?context,
+                    "Event predates subscription, skipping"
+                );
+                continue;
+            }
+            
             let filter: Filter = match serde_json::from_str(&filter_json) {
                 Ok(f) => f,
                 Err(e) => {
@@ -726,7 +763,7 @@ pub async fn handle_custom_subscriptions(
             };
 
             if filter.match_event(event) {
-                trace!(event_id = %event.id, user = %user_pubkey, "Event matches subscription filter");
+                trace!(event_id = %event.id, user = %user_pubkey, "Event matches subscription filter and timestamp");
                 matched = true;
                 break; // One match is enough
             }
@@ -755,6 +792,12 @@ pub async fn handle_custom_subscriptions(
     // Skip this for kind 9/10 events as they're already handled by handle_group_message
     if event.kind == Kind::Custom(9) || event.kind == Kind::Custom(10) {
         debug!(event_id = %event.id, "Skipping mention processing for kind 9/10 (handled by handle_group_message)");
+        return Ok(());
+    }
+    
+    // Skip mention processing for historical events - they should not trigger mention notifications
+    if matches!(context, EventContext::Historical) {
+        debug!(event_id = %event.id, "Skipping mention processing for historical event");
         return Ok(());
     }
     

@@ -1,5 +1,6 @@
 use crate::{
     error::{Result, ServiceError},
+    event_handler::EventContext,
     state::AppState,
 };
 use nostr_sdk::prelude::*;
@@ -11,7 +12,7 @@ use tracing::{debug, error, info, warn};
 
 pub async fn run(
     state: Arc<AppState>,
-    event_tx: Sender<Box<Event>>,
+    event_tx: Sender<(Box<Event>, EventContext)>,
     token: CancellationToken,
 ) -> Result<()> {
     info!("Starting Nostr listener...");
@@ -106,7 +107,7 @@ pub async fn run(
                                          info!("Nostr listener cancelled while sending historical event {}.", event_id);
                                          Err(ServiceError::Cancelled)
                                      }
-                                     send_res = event_tx.send(Box::new(event)) => {
+                                     send_res = event_tx.send((Box::new(event), EventContext::Historical)) => {
                                          if let Err(e) = send_res {
                                              error!(error = %e, event_id = %event_id, "Failed to send historical event to handler task");
                                              error!("Event handler channel likely closed, stopping historical processing.");
@@ -191,7 +192,7 @@ pub async fn run(
                                         info!("Nostr listener cancelled while attempting to send live event {}.", event_id);
                                         break;
                                     }
-                                    send_res = event_tx.send(event) => {
+                                    send_res = event_tx.send((event, EventContext::Live)) => {
                                         if let Err(e) = send_res {
                                             tracing::error!(
                                                 "Failed to send event {} to handler channel: {}",
