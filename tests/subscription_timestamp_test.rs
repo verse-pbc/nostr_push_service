@@ -1,6 +1,8 @@
 use anyhow::Result;
 use nostr_sdk::{Event, EventBuilder, Keys, Kind, Tag, Timestamp, ToBech32};
-use serial_test::serial;
+// Removed serial_test - tests now run in parallel with isolated Redis databases
+
+mod common;
 use nostr_push_service::{
     config::Settings,
     redis_store::{self},
@@ -57,11 +59,8 @@ async fn setup_test_state() -> Result<(Arc<AppState>, Arc<nostr_push_service::fc
     let redis_pool = redis_store::create_pool(&redis_url, settings.redis.connection_pool_size).await?;
     
     // Clean up Redis
-    // Flush Redis DB for test isolation (tests run serially)
-    {
-        let mut conn = redis_pool.get().await?;
-        redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
-    }
+    // Clean the test database (only affects the isolated test DB)
+    common::setup_test_db(&redis_pool).await?;
 
     let mock_fcm = nostr_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_arc = Arc::new(mock_fcm.clone());
@@ -172,7 +171,6 @@ async fn process_event_with_context(
 }
 
 #[tokio::test]
-#[serial]
 async fn test_subscription_respects_timestamp() -> anyhow::Result<()> {
     // Setup
     let (state, _fcm_mock) = setup_test_state().await?;
@@ -250,7 +248,6 @@ async fn test_subscription_respects_timestamp() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_historical_events_skip_mentions() -> anyhow::Result<()> {
     // Setup
     let (state, _fcm_mock) = setup_test_state().await?;
@@ -298,7 +295,6 @@ async fn test_historical_events_skip_mentions() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_processed_events_persist_across_restart() -> anyhow::Result<()> {
     // Setup
     let (state, _fcm_mock) = setup_test_state().await?;
@@ -339,7 +335,6 @@ async fn test_processed_events_persist_across_restart() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_subscription_filter_with_multiple_users() -> anyhow::Result<()> {
     // Setup
     let (state, _fcm_mock) = setup_test_state().await?;

@@ -1,5 +1,7 @@
 use nostr_sdk::prelude::*;
-use serial_test::serial;
+// Removed serial_test - tests now run in parallel with isolated Redis databases
+
+mod common;
 use nostr_push_service::{
     config::Settings,
     event_handler,
@@ -28,7 +30,8 @@ fn unique_test_id() -> String {
 async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
     dotenvy::dotenv().ok();
     
-    let redis_url = "redis://localhost:6379";
+    let test_db = common::get_test_redis_db();
+    let redis_url = &common::create_test_redis_url(test_db);
     
     std::env::set_var(
         "NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX",
@@ -68,13 +71,11 @@ async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
     // Flush Redis DB for test isolation (tests run serially)
-    let mut conn = pool.get().await?;
-    redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
+    common::setup_test_db(pool).await?;
     Ok(())
 }
 
 #[tokio::test]
-#[serial]
 async fn test_filter_matches_kind() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
@@ -107,7 +108,6 @@ async fn test_filter_matches_kind() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_filter_matches_author() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
@@ -139,7 +139,6 @@ async fn test_filter_matches_author() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_filter_no_match() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
@@ -171,7 +170,6 @@ async fn test_filter_no_match() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_default_behavior_mentions() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
@@ -198,7 +196,6 @@ async fn test_default_behavior_mentions() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_multiple_matching_filters() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();

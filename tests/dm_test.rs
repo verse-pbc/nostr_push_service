@@ -1,5 +1,7 @@
 use nostr_sdk::prelude::*;
-use serial_test::serial;
+// Removed serial_test - tests now run in parallel with isolated Redis databases
+
+mod common;
 use nostr_push_service::{
     config::Settings, 
     event_handler, 
@@ -30,7 +32,8 @@ async fn create_test_state() -> Arc<AppState> {
     dotenvy::dotenv().ok();
     
     // Use test Redis instance
-    let redis_url = "redis://localhost:6379";
+    let test_db = common::get_test_redis_db();
+    let redis_url = &common::create_test_redis_url(test_db);
     
     // Set test keys
     std::env::set_var("NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX", 
@@ -77,13 +80,11 @@ async fn create_test_state() -> Arc<AppState> {
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
     // Flush Redis DB for test isolation (tests run serially)
-    let mut conn = pool.get().await?;
-    redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
+    common::setup_test_db(pool).await?;
     Ok(())
 }
 
 #[tokio::test]
-#[serial]
 async fn test_dm_handler_sends_to_recipients() {
     let state = create_test_state().await;
     
@@ -133,7 +134,6 @@ async fn test_dm_handler_sends_to_recipients() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_dm_handler_skips_sender() {
     let state = create_test_state().await;
     
@@ -167,7 +167,6 @@ async fn test_dm_handler_skips_sender() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_dm_handler_no_recipients_with_tokens() {
     let state = create_test_state().await;
     
@@ -190,7 +189,6 @@ async fn test_dm_handler_no_recipients_with_tokens() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_dm_handler_filters_only_p_tags() {
     let state = create_test_state().await;
     

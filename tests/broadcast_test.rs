@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use nostr_relay_builder::MockRelay;
-use serial_test::serial;
+// Removed serial_test - tests now run in parallel with isolated Redis databases
+
+mod common;
 use nostr_sdk::{ClientBuilder, Event, EventBuilder, Keys, Kind, PublicKey, Tag, ToBech32};
 use nostr_push_service::{
     config::Settings,
@@ -122,11 +124,8 @@ async fn setup_broadcast_test_environment() -> Result<(
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> Result<()> {
-    // Flush Redis DB for test isolation (tests run serially)
-    let mut conn = pool.get().await?;
-    redis::cmd("FLUSHDB")
-        .query_async::<()>(&mut *conn)
-        .await?;
+    // Clean the test database (only affects the isolated test DB)
+    common::setup_test_db(pool).await?;
     Ok(())
 }
 
@@ -198,7 +197,6 @@ async fn setup_test_group_with_admin(
 
 /// Test 1: Verify broadcast messages send notifications to all group members
 #[tokio::test]
-#[serial]
 async fn test_broadcast_notifications() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 
@@ -327,7 +325,6 @@ async fn test_broadcast_notifications() -> Result<()> {
 
 /// Test 2: Verify regular mention-based notifications still work alongside broadcast
 #[tokio::test]
-#[serial]
 async fn test_regular_mentions_with_broadcast() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 
@@ -482,7 +479,6 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
 
 /// Test 3: Performance test with large groups
 #[tokio::test]
-#[serial]
 async fn test_broadcast_performance_large_group() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 
@@ -606,7 +602,6 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
 
 /// Test 4: Direct broadcast tag test to ensure proper tag detection
 #[tokio::test]
-#[serial]
 async fn test_broadcast_tag_detection() -> Result<()> {
     // Create unique test ID for this test
     let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -668,7 +663,6 @@ async fn test_broadcast_tag_detection() -> Result<()> {
 
 /// Test 5: Admin permission verification for broadcast messages
 #[tokio::test]
-#[serial]
 async fn test_admin_permission_verification() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 
@@ -799,7 +793,6 @@ async fn test_admin_permission_verification() -> Result<()> {
 
 /// Test 6: Event kind filtering for broadcast messages
 #[tokio::test]
-#[serial]
 async fn test_event_kind_filtering() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
 

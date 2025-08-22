@@ -1,7 +1,9 @@
 // Integration tests for plur_push_service
 
 use anyhow::{anyhow, Result};
-use serial_test::serial;
+// Removed serial_test - tests now run in parallel with isolated Redis databases
+
+mod common;
 use bb8_redis::bb8; // Import bb8
 use nostr_relay_builder::MockRelay;
 use nostr_sdk::{
@@ -16,12 +18,11 @@ use nostr_sdk::{
 };
 use nostr_push_service::{
     config::Settings,
-    redis_store::{self, RedisPool},
+    redis_store::{self},
     state::AppState,
 };
 use redis::AsyncCommands; // For direct Redis interaction
 use std::collections::HashSet; // Added for cache manipulation
-use std::env;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -45,10 +46,10 @@ async fn setup_test_environment() -> Result<(
     MockRelay,
 )> {
     dotenvy::dotenv().ok();
-    // Use REDIS_HOST and REDIS_PORT, falling back to defaults if not set
-    let redis_host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let redis_port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
-    let redis_url_constructed = format!("redis://{}:{}", redis_host, redis_port);
+    
+    // Get a unique Redis database for this test
+    let test_db = common::get_test_redis_db();
+    let redis_url_constructed = common::create_test_redis_url(test_db);
 
     // --- Safety Check: Prevent running tests against DigitalOcean Redis ---
     if let Ok(parsed_url) = url::Url::parse(&redis_url_constructed) {
@@ -96,11 +97,8 @@ async fn setup_test_environment() -> Result<(
         e
     })?;
 
-    // Flush Redis DB for test isolation (tests run serially)
-    {
-        let mut conn = redis_pool.get().await?;
-        redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
-    }
+    // Clean the test database (only affects the isolated test DB)
+    common::setup_test_db(&redis_pool).await?;
 
     let mock_fcm_sender_instance = nostr_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone()); // Arc for returning
@@ -141,7 +139,6 @@ async fn setup_test_environment() -> Result<(
 
 
 #[tokio::test]
-#[serial]
 async fn test_register_device_token() -> Result<()> {
     let (state, _fcm_mock, _relay_url, _mock_relay) = setup_test_environment().await?;
 
@@ -175,7 +172,6 @@ async fn test_register_device_token() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_event_handling() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_test_environment().await?;
 

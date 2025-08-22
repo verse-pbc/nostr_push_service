@@ -69,5 +69,5 @@ url = "2.5"
 # Add nostr-relay-builder back
 nostr-relay-builder = { version = "0.40.0", package = "nostr-relay-builder" }
 nostr_push_service = { path = "." }
-serial_test = "3.2.0"
+# serial_test = "3.2.0" # Removed - tests now run in parallel with isolated Redis databases
 # testcontainers = "0.20.0" # Removed
