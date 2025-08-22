@@ -158,7 +158,6 @@ jobs:
     permissions:
       contents: write
       actions: write
-      workflows: write
     steps:
 
       - name: Check Out the Repo
