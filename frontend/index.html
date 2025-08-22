@@ -701,6 +701,7 @@
                 }
                 
                 vapidPublicKey = config.vapidPublicKey;
+                log(`VAPID key loaded from config: ${vapidPublicKey ? vapidPublicKey.substring(0, 20) + '...' : 'NOT PROVIDED'}`, 'info');
                 
                 // Handle foreground messages
                 messaging.onMessage(async (payload) => {
@@ -1111,6 +1112,11 @@
                         log(`SW update check failed: ${err.message}`, 'warning');
                     });
                 }
+                
+                // Debug messaging and vapid status BEFORE the if statement
+                log(`=== FCM Token Request Debug ===`, 'info');
+                log(`messaging object: ${typeof messaging} - ${messaging ? 'exists' : 'null/undefined'}`, 'info');
+                log(`vapidPublicKey: ${vapidPublicKey ? vapidPublicKey.substring(0, 20) + '...' : 'NULL/UNDEFINED'}`, 'info');
                 
                 // Try to get FCM token with detailed error handling
                 if (messaging && vapidPublicKey) {
