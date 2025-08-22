@@ -15,6 +15,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nostr Push">
     <link rel="apple-touch-icon" href="/icon-192x192.png">
+    
+    <!-- Prevent duplicate installations -->
+    <meta name="application-name" content="Nostr Push">
+    <meta name="msapplication-starturl" content="/?source=pwa">
+    <link rel="canonical" href="https://nostrpush.verse.app/">
     <style>
         * {
             margin: 0;
@@ -436,6 +441,24 @@
 
         window.addEventListener('load', async () => {
             log('Initializing...', 'info');
+            
+            // Detect if running as installed PWA
+            const isPWA = window.matchMedia('(display-mode: standalone)').matches || 
+                         window.navigator.standalone || 
+                         document.referrer.includes('android-app://');
+            
+            if (isPWA) {
+                log('Running as installed PWA', 'info');
+                // Add visual indicator that app is installed
+                document.body.classList.add('pwa-installed');
+            } else {
+                // Check if PWA is installable
+                window.addEventListener('beforeinstallprompt', (e) => {
+                    e.preventDefault();
+                    log('PWA is installable', 'info');
+                    // Could show custom install button here
+                });
+            }
             
             // Check for push notification support
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);

@@ -1,8 +1,10 @@
 {
+  "id": "nostr-push-service-v1",
   "name": "Nostr Push Notifications",
   "short_name": "Nostr Push",
   "description": "Nostr push notification service demo",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#4CAF50",
