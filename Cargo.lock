@@ -1717,6 +1717,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "nostr_push_service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "bb8-redis",
+ "chrono",
+ "config",
+ "dotenvy",
+ "firebase-messaging-rs",
+ "futures",
+ "futures-util",
+ "hex",
+ "nostr-relay-builder",
+ "nostr-sdk",
+ "nostr_push_service",
+ "once_cell",
+ "portpicker",
+ "redis",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util 0.6.10",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "validator",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2009,42 +2045,6 @@ name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
-
-[[package]]
-name = "plur_push_service"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "bb8-redis",
- "chrono",
- "config",
- "dotenvy",
- "firebase-messaging-rs",
- "futures",
- "futures-util",
- "hex",
- "nostr-relay-builder",
- "nostr-sdk",
- "once_cell",
- "plur_push_service",
- "portpicker",
- "redis",
- "reqwest",
- "serde",
- "serde_json",
- "serial_test",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util 0.6.10",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
- "validator",
-]
 
 [[package]]
 name = "poly1305"

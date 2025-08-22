@@ -1,6 +1,6 @@
 // Firebase Messaging Service Worker
 // This file must be at the root of your domain for Web Push to work
-// Version: 1.0.1
+// Version: 1.0.2 - Force cache update for PWA fixes
 
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
@@ -12,16 +12,36 @@ firebase.initializeApp(firebaseConfig);
 
 const messaging = firebase.messaging();
 
+// Cache version - increment this to force cache update
+const CACHE_VERSION = 'v1.0.2';
+const CACHE_NAME = `nostr-push-${CACHE_VERSION}`;
+
 // Service worker lifecycle management
 // Skip waiting and claim clients immediately when updating
 self.addEventListener('install', (event) => {
-    console.log('[Service Worker] Installing new version...');
+    console.log('[Service Worker] Installing new version...', CACHE_VERSION);
     self.skipWaiting(); // Replace old service worker immediately
 });
 
 self.addEventListener('activate', (event) => {
-    console.log('[Service Worker] Activating new version...');
-    event.waitUntil(clients.claim()); // Take control of all clients immediately
+    console.log('[Service Worker] Activating new version...', CACHE_VERSION);
+    event.waitUntil(
+        Promise.all([
+            // Clean up old caches
+            caches.keys().then(cacheNames => {
+                return Promise.all(
+                    cacheNames
+                        .filter(cacheName => cacheName.startsWith('nostr-push-') && cacheName !== CACHE_NAME)
+                        .map(cacheName => {
+                            console.log('[Service Worker] Deleting old cache:', cacheName);
+                            return caches.delete(cacheName);
+                        })
+                );
+            }),
+            // Take control of all clients immediately
+            clients.claim()
+        ])
+    );
 });
 
 // Handle background messages - this is the proper FCM way for data-only messages
@@ -59,6 +79,38 @@ messaging.onBackgroundMessage((payload) => {
     } else {
         console.error('[firebase-messaging-sw.js] Missing required data fields');
     }
+});
+
+// Handle fetch events - bypass cache for HTML to ensure updates
+self.addEventListener('fetch', (event) => {
+    // For HTML files, always fetch fresh from network
+    if (event.request.mode === 'navigate' || event.request.url.endsWith('.html')) {
+        event.respondWith(
+            fetch(event.request)
+                .then(response => {
+                    // Clone the response before using it
+                    const responseToCache = response.clone();
+                    
+                    // Update cache with fresh response
+                    caches.open(CACHE_NAME).then(cache => {
+                        cache.put(event.request, responseToCache);
+                    });
+                    
+                    return response;
+                })
+                .catch(() => {
+                    // If network fails, try cache as fallback
+                    return caches.match(event.request);
+                })
+        );
+        return;
+    }
+    
+    // For other resources, use cache-first strategy
+    event.respondWith(
+        caches.match(event.request)
+            .then(response => response || fetch(event.request))
+    );
 });
 
 // Handle notification click
