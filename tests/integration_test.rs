@@ -1,6 +1,7 @@
 // Integration tests for plur_push_service
 
 use anyhow::{anyhow, Result};
+use serial_test::serial;
 use bb8_redis::bb8; // Import bb8
 use nostr_relay_builder::MockRelay;
 use nostr_sdk::{
@@ -22,9 +23,13 @@ use redis::AsyncCommands; // For direct Redis interaction
 use std::collections::HashSet; // Added for cache manipulation
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken; // For service shutdown
 use url::Url;
+
+// Global counter for unique test IDs
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Import service components and event type
 use plur_push_service::{event_handler, nostr_listener};
@@ -91,9 +96,11 @@ async fn setup_test_environment() -> Result<(
         e
     })?;
 
-    println!("Cleaning up Redis...");
-    cleanup_redis(&redis_pool).await?; // Cleanup *before* returning state
-    println!("Redis cleanup completed successfully.");
+    // Flush Redis DB for test isolation (tests run serially)
+    {
+        let mut conn = redis_pool.get().await?;
+        redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
+    }
 
     let mock_fcm_sender_instance = plur_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone()); // Arc for returning
@@ -132,29 +139,18 @@ async fn setup_test_environment() -> Result<(
     ))
 }
 
-async fn cleanup_redis(pool: &RedisPool) -> Result<()> {
-    let mut conn = pool
-        .get()
-        .await
-        .map_err(|e: bb8::RunError<redis::RedisError>| {
-            anyhow!("Failed to get Redis connection: {}", e)
-        })?;
-    redis::cmd("FLUSHDB")
-        .query_async::<()>(&mut *conn)
-        .await
-        .map_err(|e: redis::RedisError| anyhow!("Failed to flush Redis DB: {}", e))?;
-    Ok(())
-}
 
 #[tokio::test]
+#[serial]
 async fn test_register_device_token() -> Result<()> {
     let (state, _fcm_mock, _relay_url, _mock_relay) = setup_test_environment().await?;
 
+    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let pubkey_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
     let pubkey = PublicKey::from_hex(pubkey_hex)?;
-    let token = "test_token_for_registration";
+    let token = format!("test_token_for_registration_{}", test_id);
 
-    plur_push_service::redis_store::add_or_update_token(&state.redis_pool, &pubkey, token).await?;
+    plur_push_service::redis_store::add_or_update_token(&state.redis_pool, &pubkey, &token).await?;
 
     let stored_tokens =
         plur_push_service::redis_store::get_tokens_for_pubkey(&state.redis_pool, &pubkey).await?;
@@ -179,6 +175,7 @@ async fn test_register_device_token() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_event_handling() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_test_environment().await?;
 

@@ -1,4 +1,5 @@
 use nostr_sdk::prelude::*;
+use serial_test::serial;
 use plur_push_service::{
     config::Settings,
     event_handler,
@@ -50,12 +51,14 @@ async fn create_test_state() -> Arc<AppState> {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
+    // Flush Redis DB for test isolation (tests run serially)
     let mut conn = pool.get().await?;
     redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
     Ok(())
 }
 
 #[tokio::test]
+#[serial]
 async fn test_subscription_upsert() {
     let state = create_test_state().await;
     let user_keys = Keys::generate();
@@ -86,6 +89,7 @@ async fn test_subscription_upsert() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_subscription_delete() {
     let state = create_test_state().await;
     let user_keys = Keys::generate();
@@ -119,6 +123,7 @@ async fn test_subscription_delete() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_multiple_subscriptions() {
     let state = create_test_state().await;
     let user_keys = Keys::generate();
@@ -164,6 +169,7 @@ async fn test_multiple_subscriptions() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_duplicate_subscription() {
     let state = create_test_state().await;
     let user_keys = Keys::generate();
@@ -194,6 +200,7 @@ async fn test_duplicate_subscription() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_invalid_filter_json() {
     let state = create_test_state().await;
     let user_keys = Keys::generate();

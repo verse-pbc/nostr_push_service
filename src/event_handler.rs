@@ -740,14 +740,16 @@ pub async fn handle_custom_subscriptions(
         let event_timestamp = event.created_at.as_u64();
         
         for (filter_json, subscription_timestamp) in subscriptions_with_timestamps {
-            // Skip if event is older than subscription (only for historical events)
-            if matches!(context, EventContext::Historical) && event_timestamp < subscription_timestamp {
+            // For Live events: always check timestamps - don't send notifications for events that occurred before subscription
+            // For Historical events: also check timestamps during replay
+            if event_timestamp < subscription_timestamp {
                 trace!(
                     event_id = %event.id, 
                     user = %user_pubkey, 
                     event_time = event_timestamp,
                     subscription_time = subscription_timestamp,
-                    "Historical event predates subscription, skipping"
+                    context = ?context,
+                    "Event predates subscription, skipping"
                 );
                 continue;
             }
@@ -790,6 +792,12 @@ pub async fn handle_custom_subscriptions(
     // Skip this for kind 9/10 events as they're already handled by handle_group_message
     if event.kind == Kind::Custom(9) || event.kind == Kind::Custom(10) {
         debug!(event_id = %event.id, "Skipping mention processing for kind 9/10 (handled by handle_group_message)");
+        return Ok(());
+    }
+    
+    // Skip mention processing for historical events - they should not trigger mention notifications
+    if matches!(context, EventContext::Historical) {
+        debug!(event_id = %event.id, "Skipping mention processing for historical event");
         return Ok(());
     }
     

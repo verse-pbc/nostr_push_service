@@ -1,13 +1,27 @@
 use anyhow::Result;
 use nostr_sdk::{Event, EventBuilder, Keys, Kind, Tag, Timestamp, ToBech32};
+use serial_test::serial;
 use plur_push_service::{
     config::Settings,
-    redis_store::{self, RedisPool},
+    redis_store::{self},
     state::AppState,
 };
 use std::env;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+// Global counter for unique test IDs
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn unique_test_id() -> String {
+    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    format!("{}_{}", timestamp, counter)
+}
 
 // Event context to distinguish historical from live events
 #[derive(Debug, Clone, Copy)]
@@ -43,6 +57,7 @@ async fn setup_test_state() -> Result<(Arc<AppState>, Arc<plur_push_service::fcm
     let redis_pool = redis_store::create_pool(&redis_url, settings.redis.connection_pool_size).await?;
     
     // Clean up Redis
+    // Flush Redis DB for test isolation (tests run serially)
     {
         let mut conn = redis_pool.get().await?;
         redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
@@ -115,9 +130,9 @@ async fn process_event_with_context(
         let subscriptions = redis_store::get_subscriptions_with_timestamps(&state.redis_pool, &user_pubkey).await?;
         
         for (filter_json, subscription_timestamp) in subscriptions {
-            // Check timestamp - skip if event is older than subscription (only for historical events)
+            // Check timestamp - skip if event is older than subscription
             let event_time = event.created_at.as_u64();
-            if matches!(context, EventContext::Historical) && event_time < subscription_timestamp {
+            if event_time < subscription_timestamp {
                 continue;
             }
             
@@ -157,6 +172,7 @@ async fn process_event_with_context(
 }
 
 #[tokio::test]
+#[serial]
 async fn test_subscription_respects_timestamp() -> anyhow::Result<()> {
     // Setup
     let (state, _fcm_mock) = setup_test_state().await?;
@@ -164,8 +180,9 @@ async fn test_subscription_respects_timestamp() -> anyhow::Result<()> {
     let user_pubkey = user_keys.public_key();
     let sender_keys = Keys::generate();
     
-    // Register user with FCM token
-    register_user_token(&state, &user_keys, "test_token_123").await?;
+    // Register user with FCM token using unique ID
+    let token = format!("test_token_{}", unique_test_id());
+    register_user_token(&state, &user_keys, &token).await?;
     
     // Create an old event (before subscription) with explicit timestamp
     let old_timestamp = Timestamp::now() - Duration::from_secs(10); // 10 seconds ago
@@ -233,6 +250,7 @@ async fn test_subscription_respects_timestamp() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_historical_events_skip_mentions() -> anyhow::Result<()> {
     // Setup
     let (state, _fcm_mock) = setup_test_state().await?;
@@ -280,6 +298,7 @@ async fn test_historical_events_skip_mentions() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_processed_events_persist_across_restart() -> anyhow::Result<()> {
     // Setup
     let (state, _fcm_mock) = setup_test_state().await?;
@@ -320,6 +339,7 @@ async fn test_processed_events_persist_across_restart() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_subscription_filter_with_multiple_users() -> anyhow::Result<()> {
     // Setup
     let (state, _fcm_mock) = setup_test_state().await?;

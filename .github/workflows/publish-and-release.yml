@@ -103,6 +103,7 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           RUST_BACKTRACE: 1
+          RUST_TEST_THREADS: 1  # Run tests single-threaded to prevent Redis state conflicts
         run: cargo test --verbose
 
   push_to_registry:
