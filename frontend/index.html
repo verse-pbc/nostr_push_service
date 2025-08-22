@@ -1112,16 +1112,59 @@
                     });
                 }
                 
+                // Try to get FCM token with detailed error handling
                 if (messaging && vapidPublicKey) {
-                    const token = await messaging.getToken({
-                        vapidKey: vapidPublicKey,
-                        serviceWorkerRegistration: registration
-                    });
+                    log('Requesting FCM token from Firebase...', 'info');
+                    log(`VAPID key: ${vapidPublicKey.substring(0, 20)}...`, 'info');
                     
-                    if (token) {
-                        currentFcmToken = token;
-                        document.getElementById('fcmToken').textContent = token.substring(0, 20) + '...';
+                    try {
+                        const token = await messaging.getToken({
+                            vapidKey: vapidPublicKey,
+                            serviceWorkerRegistration: registration
+                        });
+                        
+                        if (token) {
+                            currentFcmToken = token;
+                            document.getElementById('fcmToken').textContent = token.substring(0, 20) + '...';
+                            log(`FCM token received: ${token.substring(0, 20)}...`, 'success');
+                        } else {
+                            log('WARNING: getToken returned null/undefined', 'warning');
+                            log('This can happen on iOS if push permissions were not granted', 'warning');
+                            
+                            // On iOS PWA, sometimes we need to wait for SW to be ready
+                            if (isIOS) {
+                                log('iOS detected - retrying token request after delay...', 'info');
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                
+                                const retryToken = await messaging.getToken({
+                                    vapidKey: vapidPublicKey,
+                                    serviceWorkerRegistration: registration
+                                });
+                                
+                                if (retryToken) {
+                                    currentFcmToken = retryToken;
+                                    document.getElementById('fcmToken').textContent = retryToken.substring(0, 20) + '...';
+                                    log(`FCM token received on retry: ${retryToken.substring(0, 20)}...`, 'success');
+                                } else {
+                                    log('ERROR: Still no FCM token after retry', 'error');
+                                    log('Possible causes:', 'error');
+                                    log('1. Push notifications not properly enabled in iOS settings', 'error');
+                                    log('2. Firebase configuration issue', 'error');
+                                    log('3. PWA needs to be reinstalled', 'error');
+                                }
+                            }
+                        }
+                    } catch (tokenError) {
+                        log(`FCM token error: ${tokenError.message}`, 'error');
+                        if (tokenError.code) {
+                            log(`Error code: ${tokenError.code}`, 'error');
+                        }
+                        throw tokenError;
                     }
+                } else {
+                    log('WARNING: messaging or vapidPublicKey not available', 'warning');
+                    log(`messaging: ${messaging ? 'defined' : 'undefined'}`, 'warning');
+                    log(`vapidPublicKey: ${vapidPublicKey ? 'defined' : 'undefined'}`, 'warning');
                 }
                 
                 // Debug: Log the state before creating event
