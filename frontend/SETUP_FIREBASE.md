@@ -1,6 +1,6 @@
 # Setting Up Firebase for Web Push Notifications
 
-This guide explains how to configure Firebase Cloud Messaging (FCM) for web push notifications with the Plur Push Service.
+This guide explains how to configure Firebase Cloud Messaging (FCM) for web push notifications with the Nostr Push Service.
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ This guide explains how to configure Firebase Cloud Messaging (FCM) for web push
 3. Click the gear icon ⚙️ → **Project Settings**
 4. Under **General** tab, scroll to **Your apps**
 5. Click **Add app** → **Web** (</>) if you haven't already
-6. Register your app with a nickname (e.g., "Plur Push Web")
+6. Register your app with a nickname (e.g., "Nostr Push Web")
 7. Copy the Firebase configuration object
 
 ## Step 2: Get VAPID Key for Web Push

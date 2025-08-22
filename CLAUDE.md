@@ -1,4 +1,4 @@
-# Plur Push Service Development Guide
+# Nostr Push Service Development Guide
 
 ## Build & Test Commands
 ```bash

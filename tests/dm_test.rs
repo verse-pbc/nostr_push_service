@@ -1,6 +1,6 @@
 use nostr_sdk::prelude::*;
 use serial_test::serial;
-use plur_push_service::{
+use nostr_push_service::{
     config::Settings, 
     event_handler, 
     fcm_sender::{FcmClient, MockFcmSender},
@@ -33,7 +33,7 @@ async fn create_test_state() -> Arc<AppState> {
     let redis_url = "redis://localhost:6379";
     
     // Set test keys
-    std::env::set_var("PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX", 
+    std::env::set_var("NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX", 
         "0000000000000000000000000000000000000000000000000000000000000001");
     
     let mut settings = Settings::new().expect("Failed to load settings");

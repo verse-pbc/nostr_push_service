@@ -1,13 +1,13 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: plur-push-pdb
-  namespace: plur-push
+  name: nostr-push-pdb
+  namespace: nostr-push
   labels:
-    app.kubernetes.io/part-of: plur-push
+    app.kubernetes.io/part-of: nostr-push
     app.kubernetes.io/managed-by: Helm
 spec:
   minAvailable: {{ .Values.pdb.minAvailable | default 1 }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: plur-push
+      app.kubernetes.io/name: nostr-push

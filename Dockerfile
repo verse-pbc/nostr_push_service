@@ -13,13 +13,13 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main(){}" > src/main.rs
 
 # Build dependencies (this layer is cached if manifests don't change)
-RUN cargo build --release --bin plur_push_service
+RUN cargo build --release --bin nostr_push_service
 
 # Copy the actual source code
 COPY . .
 
 # Build the application binary, leveraging cached dependencies
-RUN touch src/main.rs && cargo build --release --bin plur_push_service
+RUN touch src/main.rs && cargo build --release --bin nostr_push_service
 
 # Stage 2: Create the final lean image
 FROM debian:bookworm-slim
@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 
 # Copy the compiled binary from the builder stage
-COPY --from=builder /app/target/release/plur_push_service .
+COPY --from=builder /app/target/release/nostr_push_service .
 
 # Copy the configuration directory
 COPY config ./config
@@ -44,7 +44,7 @@ COPY config ./config
 # USER appuser
 
 # Define the entrypoint
-ENTRYPOINT ["./plur_push_service"]
+ENTRYPOINT ["./nostr_push_service"]
 
 # Default command (can be overridden)
 CMD []

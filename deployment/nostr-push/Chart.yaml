@@ -1,6 +1,6 @@
 apiVersion: v2
-name: plur-push
-description: The Plur Push Application
+name: nostr-push
+description: The Nostr Push Service Application
 
 type: application
 

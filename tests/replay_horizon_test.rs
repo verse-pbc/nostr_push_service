@@ -1,5 +1,5 @@
 use nostr_sdk::prelude::*;
-use plur_push_service::event_handler;
+use nostr_push_service::event_handler;
 use std::time::Duration;
 
 #[tokio::test]

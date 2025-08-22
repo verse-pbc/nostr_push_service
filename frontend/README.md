@@ -1,6 +1,6 @@
 # Push Notification Test Frontend
 
-A web interface for testing the Plur Push Service push notification system via Nostr events, with real Firebase Cloud Messaging (FCM) integration for Web Push.
+A web interface for testing the Nostr Push Service push notification system via Nostr events, with real Firebase Cloud Messaging (FCM) integration for Web Push.
 
 ## Features
 

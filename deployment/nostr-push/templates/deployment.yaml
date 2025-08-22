@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: plur-push-deployment
-  namespace: plur-push
+  name: nostr-push-deployment
+  namespace: nostr-push
   labels:
-    app.kubernetes.io/name: plur-push
-    app.kubernetes.io/part-of: plur-push
+    app.kubernetes.io/name: nostr-push
+    app.kubernetes.io/part-of: nostr-push
     app.kubernetes.io/managed-by: Helm
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: plur-push
+      app.kubernetes.io/name: nostr-push
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: plur-push
-        app.kubernetes.io/part-of: plur-push
+        app.kubernetes.io/name: nostr-push
+        app.kubernetes.io/part-of: nostr-push
         app.kubernetes.io/managed-by: Helm
     spec:
       containers:
@@ -31,12 +31,12 @@ spec:
             - name: PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX
               valueFrom:
                 secretKeyRef:
-                  name: plur-push-secret
+                  name: nostr-push-secret
                   key: app-nip29-relay-private-key
             - name: REDIS_URL
               valueFrom:
                 secretKeyRef:
-                  name: plur-push-secret
+                  name: nostr-push-secret
                   key: redis-connection-string
             - name: PLUR_PUSH__FCM__PROJECT_ID
               value: plur-623b0
@@ -101,7 +101,7 @@ spec:
       volumes:
         - name: google-application-credentials
           secret:
-            secretName: plur-push-secret
+            secretName: nostr-push-secret
             items:
               - key: google-application-credentials
                 path: serviceAccountKey.json

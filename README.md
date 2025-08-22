@@ -1,4 +1,4 @@
-# Plur Push Service
+# Nostr Push Service
 
 This service listens to a Nostr relay for specific events related to user device registration and messages, and sends push notifications via Firebase Cloud Messaging (FCM) accordingly.
 
@@ -8,12 +8,12 @@ It is written in Rust, uses Redis for storing mappings between user public keys 
 
 The system design involves several components:
 
-1.  **Client (Plur App):**
+1.  **Client (Nostr App):**
     *   Obtains an FCM device token.
     *   Publishes registration (`kind: 3079`) and deregistration (`kind: 3080`) events to the Nostr Relay.
 2.  **Nostr Relay:**
     *   Acts as the communication bus between Clients and the Service.
-3.  **Plur Push Service (This Repository):**
+3.  **Nostr Push Service (This Repository):**
     *   Connects to the Nostr Relay (authenticating using `service.service_private_key_hex` if provided for NIP-42).
     *   Listens for registration (`kind: 3079`) and deregistration (`kind: 3080`) events.
     *   Stores/Removes mappings of `pubkey -> [fcm_token]` in Redis.
@@ -25,7 +25,7 @@ The system design involves several components:
     *   Periodically cleans up stale tokens from Redis based on a configurable TTL (`token_max_age_days`).
     *   Processes historical events upon startup to handle potential downtime.
 4.  **Firebase Cloud Messaging (FCM):**
-    *   Receives notification requests from the Plur Push Service.
+    *   Receives notification requests from the Nostr Push Service.
     *   Delivers push notifications to the registered client devices (iOS, Android, Web).
 
 ### Notification Types
@@ -66,12 +66,12 @@ Requirements for broadcast notifications:
 
 The service is configured via environment variables and a `config/settings.yaml` file. Key settings include:
 
-*   `server.listen_addr`: The address and port for the HTTP server (e.g., health check). Defaults to `0.0.0.0:8000`. (Env: `PLUR_PUSH__SERVER__LISTEN_ADDR`)
+*   `server.listen_addr`: The address and port for the HTTP server (e.g., health check). Defaults to `0.0.0.0:8000`. (Env: `NOSTR_PUSH__SERVER__LISTEN_ADDR`)
 *   `nostr.relay_url`: The URL of the Nostr relay to connect to.
-*   `service.service_private_key_hex` (Optional, field name `service_private_key_hex`, overridden by env `PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX`): Private key for the service's Nostr identity. This key is used as the signer for the Nostr client, which enables NIP-42 authentication if the relay requires it from this public key.
+*   `service.service_private_key_hex` (Optional, field name `service_private_key_hex`, overridden by env `NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX`): Private key for the service's Nostr identity. This key is used as the signer for the Nostr client, which enables NIP-42 authentication if the relay requires it from this public key.
 *   `service.listen_kinds`: List of Nostr event kinds to monitor for sending notifications.
 *   `service.process_window_days`: How far back to look for historical events on startup.
-*   `redis.url` (Typically set via `PLUR_PUSH__REDIS__URL` env var): Connection URL for the Redis instance.
+*   `redis.url` (Typically set via `NOSTR_PUSH__REDIS__URL` env var): Connection URL for the Redis instance.
 *   `fcm.project_id`: Your Firebase/Google Cloud project ID.
 *   `cleanup.enabled`: Whether to enable periodic stale token cleanup.
 *   `cleanup.interval_secs`: How often the cleanup task runs.
@@ -92,7 +92,7 @@ The service is configured via environment variables and a `config/settings.yaml`
     docker compose build --no-cache
     ```
 3.  **Run the Container:**
-    Ensure your environment variables are set (e.g., in a `.env` file) for `GOOGLE_APPLICATION_CREDENTIALS`, `PLUR_PUSH__REDIS__URL`, `PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX`, etc.
+    Ensure your environment variables are set (e.g., in a `.env` file) for `GOOGLE_APPLICATION_CREDENTIALS`, `NOSTR_PUSH__REDIS__URL`, `NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX`, etc.
     ```bash
     docker compose up -d
     ```

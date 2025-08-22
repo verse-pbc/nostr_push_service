@@ -162,7 +162,7 @@ impl FcmClient {
     // Updated new to initialize with the RealFcmClient implementation
     pub fn new(settings: &FcmSettings) -> Result<Self, FcmError> {
         // Handle credentials from base64 environment variable
-        if let Ok(credentials_base64) = std::env::var("PLUR_PUSH__FCM__CREDENTIALS_BASE64") {
+        if let Ok(credentials_base64) = std::env::var("NOSTR_PUSH__FCM__CREDENTIALS_BASE64") {
             if !credentials_base64.is_empty() {
                 // Decode base64 credentials
                 use base64::Engine;
