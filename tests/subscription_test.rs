@@ -124,6 +124,14 @@ async fn test_multiple_subscriptions() {
     let state = create_test_state().await;
     let user_keys = Keys::generate();
     
+    // Clean up any existing subscriptions for this user first (in case of test pollution)
+    let subscriptions_key = format!("subscriptions:{}", user_keys.public_key().to_hex());
+    let mut conn = state.redis_pool.get().await.unwrap();
+    let _: Result<(), _> = redis::cmd("DEL")
+        .arg(&subscriptions_key)
+        .query_async(&mut *conn)
+        .await;
+    
     // Add multiple different subscriptions - make them explicitly distinct
     let author_keys = Keys::generate(); // Use a different key for author filter
     let filter1 = Filter::new().kind(Kind::TextNote);
