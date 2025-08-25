@@ -172,6 +172,9 @@ jobs:
           git config --global user.email "ci@verse.app"
           git checkout release
           git merge -Xtheirs --no-commit origin/main
+          # Reset workflow files to avoid permission issues
+          git reset HEAD .github/workflows/
+          git checkout -- .github/workflows/
 
       - name: Apply Newest Version
         shell: bash
