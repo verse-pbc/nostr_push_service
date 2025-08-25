@@ -1,30 +1,60 @@
 // Firebase Messaging Service Worker
 // This file must be at the root of your domain for Web Push to work
-// Version: 1.0.2 - Force cache update for PWA fixes
+// Version: 1.0.4 - Force cache update 2024-11-25-1648
 
-importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
+// SW to Page log bridge
+const swLog = async (level, text) => {
+  const cs = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+  for (const c of cs) c.postMessage({ __SW_LOG__: true, level, text });
+};
 
-// Initialize Firebase - you need to update firebase-config.js with your config
-self.importScripts('/firebase-config.js');
+// Load Firebase libraries with error handling
+try {
+  importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
+  swLog('info', 'Firebase compat libs loaded');
+} catch (e) {
+  swLog('error', `Failed to load Firebase libs: ${e.message}`);
+}
 
-firebase.initializeApp(firebaseConfig);
+// Load config with error handling
+let firebaseConfigOk = false;
+try {
+  self.importScripts('/firebase-config.js');
+  if (typeof firebaseConfig === 'undefined') throw new Error('firebaseConfig undefined');
+  firebase.initializeApp(firebaseConfig);
+  swLog('info', 'firebase-config.js loaded and app initialized');
+  firebaseConfigOk = true;
+} catch (e) {
+  swLog('error', `Failed to load /firebase-config.js: ${e.message}`);
+}
 
-const messaging = firebase.messaging();
+// Initialize messaging if config loaded
+let messaging;
+if (firebaseConfigOk) {
+  try {
+    messaging = firebase.messaging();
+    swLog('info', 'Firebase Messaging initialized');
+  } catch (e) {
+    swLog('error', `Messaging init failed: ${e.message}`);
+  }
+}
 
 // Cache version - increment this to force cache update
-const CACHE_VERSION = 'v1.0.2';
+const CACHE_VERSION = 'v1.0.4-1648';
 const CACHE_NAME = `nostr-push-${CACHE_VERSION}`;
 
 // Service worker lifecycle management
 // Skip waiting and claim clients immediately when updating
 self.addEventListener('install', (event) => {
     console.log('[Service Worker] Installing new version...', CACHE_VERSION);
+    swLog('info', `SW install - version ${CACHE_VERSION}`);
     self.skipWaiting(); // Replace old service worker immediately
 });
 
 self.addEventListener('activate', (event) => {
     console.log('[Service Worker] Activating new version...', CACHE_VERSION);
+    swLog('info', `SW activate - version ${CACHE_VERSION}`);
     event.waitUntil(
         Promise.all([
             // Clean up old caches
@@ -45,7 +75,8 @@ self.addEventListener('activate', (event) => {
 });
 
 // Handle background messages - this is the proper FCM way for data-only messages
-messaging.onBackgroundMessage((payload) => {
+if (messaging) {
+  messaging.onBackgroundMessage((payload) => {
     console.log('[firebase-messaging-sw.js] Received background message', payload);
     console.log('[firebase-messaging-sw.js] Payload data:', payload.data);
     console.log('[firebase-messaging-sw.js] Title from data:', payload.data?.title);
@@ -79,9 +110,12 @@ messaging.onBackgroundMessage((payload) => {
     } else {
         console.error('[firebase-messaging-sw.js] Missing required data fields');
     }
-});
+  });
+}
 
 // Handle fetch events - bypass cache for HTML to ensure updates
+// TEMPORARILY DISABLED for debugging
+/*
 self.addEventListener('fetch', (event) => {
     // For HTML files, always fetch fresh from network
     if (event.request.mode === 'navigate' || event.request.url.endsWith('.html')) {
@@ -151,3 +185,4 @@ self.addEventListener('notificationclick', (event) => {
         })()
     );
 });
+*/
