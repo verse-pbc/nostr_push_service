@@ -186,6 +186,7 @@ jobs:
         shell: bash
         run: |
           git tag ${{ needs.get_version.outputs.SemVer }}
-          git commit -a -m "Version ${{ needs.get_version.outputs.SemVer }} Release"
+          git add ./deployment/nostr-push/Chart.yaml ./deployment/nostr-push/values.yaml
+          git commit -m "Version ${{ needs.get_version.outputs.SemVer }} Release"
           git push
           git push --tags
