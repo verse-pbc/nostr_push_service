@@ -73,6 +73,11 @@ spec:
                 configMapKeyRef:
                   name: firebase-web-config
                   key: FIREBASE_APP_ID
+            - name: FIREBASE_VAPID_PUBLIC_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_VAPID_PUBLIC_KEY
           resources:
             requests:
               memory: "256Mi"

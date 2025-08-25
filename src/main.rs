@@ -71,7 +71,8 @@ window.firebaseConfig = {{
     projectId: "{}",
     storageBucket: "{}",
     messagingSenderId: "{}",
-    appId: "{}"
+    appId: "{}",
+    vapidPublicKey: "{}"
 }};"#,
         std::env::var("FIREBASE_API_KEY").unwrap_or_else(|_| "".to_string()),
         std::env::var("FIREBASE_AUTH_DOMAIN").unwrap_or_else(|_| "".to_string()),
@@ -80,7 +81,8 @@ window.firebaseConfig = {{
         ),
         std::env::var("FIREBASE_STORAGE_BUCKET").unwrap_or_else(|_| "".to_string()),
         std::env::var("FIREBASE_MESSAGING_SENDER_ID").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_APP_ID").unwrap_or_else(|_| "".to_string())
+        std::env::var("FIREBASE_APP_ID").unwrap_or_else(|_| "".to_string()),
+        std::env::var("FIREBASE_VAPID_PUBLIC_KEY").unwrap_or_else(|_| "".to_string())
     );
     
     (
