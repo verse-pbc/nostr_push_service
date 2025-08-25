@@ -295,7 +295,7 @@ async fn test_broadcast_notifications() -> Result<()> {
     setup_test_group_with_admin(&state, group_id, admins.clone(), members.clone()).await?;
 
     // Send a broadcast message
-    let group_tag = Tag::parse(["h", &group_id])?;
+    let group_tag = Tag::parse(["h", group_id])?;
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let message_content = "This is a broadcast message to the group";
 
@@ -436,7 +436,7 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
     setup_test_group_with_admin(&state, group_id, admins.clone(), members.clone()).await?;
 
     // 1. Send a regular mention-based message (mentions user1 only)
-    let group_tag = Tag::parse(["h", &group_id])?;
+    let group_tag = Tag::parse(["h", group_id])?;
     let mention_tag = Tag::public_key(user1_keys.public_key());
     let message_content = format!("Hello @{}", user1_keys.public_key().to_bech32()?);
 
@@ -777,7 +777,7 @@ async fn test_admin_permission_verification() -> Result<()> {
     setup_test_group_with_admin(&state, group_id, admins.clone(), members.clone()).await?;
 
     // 1. Test broadcast from admin user (should work)
-    let group_tag = Tag::parse(["h", &group_id])?;
+    let group_tag = Tag::parse(["h", group_id])?;
     let broadcast_tag = Tag::parse(["broadcast"])?;
     let admin_message = "Admin broadcast message";
 
@@ -905,7 +905,7 @@ async fn test_event_kind_filtering() -> Result<()> {
     // Set up test group
     setup_test_group_with_admin(&state, group_id, admins.clone(), members.clone()).await?;
 
-    let group_tag = Tag::parse(["h", &group_id])?;
+    let group_tag = Tag::parse(["h", group_id])?;
     let broadcast_tag = Tag::parse(["broadcast"])?;
 
     // 1. Test with ALLOWED kind 11 (broadcastable) - should send notification
