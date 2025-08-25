@@ -53,9 +53,7 @@ async fn create_test_state() -> Arc<AppState> {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
-    // Clean the test database (only affects the isolated test DB)
-    common::setup_test_db(pool).await?;
-    Ok(())
+    common::clean_redis_globals(pool).await
 }
 
 #[tokio::test]

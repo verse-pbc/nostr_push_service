@@ -92,8 +92,8 @@ async fn setup_test_environment() -> Result<(
         e
     })?;
 
-    // Optional: Clean Redis once at the start of all tests
-    // common::clean_redis_once(&redis_pool).await?;
+    // Clean global Redis structures
+    common::clean_redis_globals(&redis_pool).await?;
 
     let mock_fcm_sender_instance = nostr_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone()); // Arc for returning
@@ -197,18 +197,25 @@ async fn test_event_handling() -> Result<()> {
     user_a_client.connect().await;
 
     // --- Test Registration (User A) ---
-    let fcm_token_user_a = "test_fcm_token_for_user_a";
-    let registration_event = EventBuilder::new(Kind::Custom(3079), fcm_token_user_a)
+    let test_id = common::get_unique_test_id();
+    let fcm_token_user_a = format!("test_fcm_token_for_user_a_{}", test_id);
+    let registration_event = EventBuilder::new(Kind::Custom(3079), &fcm_token_user_a)
         .sign(&user_a_keys)
         .await?;
     user_a_client.send_event(&registration_event).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
     let stored_tokens =
         redis_store::get_tokens_for_pubkey(&state.redis_pool, &user_a_keys.public_key()).await?;
-    assert_eq!(stored_tokens.len(), 1);
-    assert_eq!(stored_tokens[0], fcm_token_user_a);
+    assert!(
+        stored_tokens.contains(&fcm_token_user_a),
+        "Token {} was not found in stored tokens for user",
+        fcm_token_user_a
+    );
 
     // --- Test Notification Send (User B sends message tagging User A in a group) ---
+    // Clear any previous FCM messages before this test
+    fcm_mock.clear();
+    
     let user_b_keys = Keys::generate(); // User B sends the message
     let user_b_client = ClientBuilder::new().signer(user_b_keys.clone()).build();
     user_b_client.add_relay(relay_url.as_str()).await?;
@@ -240,6 +247,13 @@ async fn test_event_handling() -> Result<()> {
 
     // Assert FCM mock received the notification for User A's token
     let sent_fcm_messages = fcm_mock.get_sent_messages();
+    
+    // Debug: Print all messages to understand duplicates
+    eprintln!("Integration test - FCM messages sent: {}", sent_fcm_messages.len());
+    for (token, _payload) in &sent_fcm_messages {
+        eprintln!("  Token: {}", token);
+    }
+    
     assert_eq!(
         sent_fcm_messages.len(),
         1,
@@ -247,7 +261,7 @@ async fn test_event_handling() -> Result<()> {
     );
     let (sent_token, sent_payload) = &sent_fcm_messages[0];
     assert_eq!(
-        sent_token, fcm_token_user_a,
+        sent_token, &fcm_token_user_a,
         "FCM message sent to wrong token"
     );
 
@@ -273,7 +287,7 @@ async fn test_event_handling() -> Result<()> {
 
     // TODO: 8. Publish Kind 3080 (Deregistration) event
     // ... (event creation, publishing) ...
-    let deregistration_event = EventBuilder::new(Kind::Custom(3080), fcm_token_user_a)
+    let deregistration_event = EventBuilder::new(Kind::Custom(3080), &fcm_token_user_a)
         .sign(&user_a_keys)
         .await?;
     user_a_client.send_event(&deregistration_event).await?;

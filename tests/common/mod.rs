@@ -6,12 +6,34 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::env;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
+use std::future::Future;
+use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 // Global counter for unique test IDs
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Track if we've cleaned Redis once at startup
 static REDIS_CLEANED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+
+/// Namespace for test isolation in Redis
+pub struct TestNamespace(String);
+
+impl TestNamespace {
+    pub fn new() -> Self {
+        // Use hash-tag to keep related keys co-located in Redis Cluster
+        let uuid = Uuid::new_v4();
+        Self(format!("test:{{{}}}", uuid))
+    }
+    
+    pub fn key(&self, k: &str) -> String {
+        format!("{}:{}", self.0, k)
+    }
+    
+    pub fn pattern(&self) -> String {
+        format!("{}:*", self.0)
+    }
+}
 
 /// Get a unique test ID for data isolation
 pub fn get_unique_test_id() -> u64 {
@@ -25,18 +47,47 @@ pub fn create_test_redis_url() -> String {
     format!("redis://{}:{}", redis_host, redis_port)
 }
 
-/// Clean Redis once at the start of test run (optional)
-pub async fn clean_redis_once(pool: &RedisPool) -> Result<()> {
-    let mut cleaned = REDIS_CLEANED.lock().unwrap();
-    if !*cleaned {
-        println!("Performing one-time Redis cleanup for test run...");
-        let mut conn = pool.get().await?;
-        redis::cmd("FLUSHDB")
-            .query_async::<()>(&mut *conn)
+/// Wipe a specific namespace in Redis using SCAN + UNLINK
+pub async fn wipe_namespace(pool: &RedisPool, ns: &TestNamespace) -> Result<()> {
+    let mut conn = pool.get().await?;
+    let mut cursor: u64 = 0;
+    
+    loop {
+        let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(ns.pattern())
+            .arg("COUNT")
+            .arg(1000)
+            .query_async(&mut *conn)
             .await?;
-        *cleaned = true;
-        println!("Redis cleanup complete.");
+            
+        if !keys.is_empty() {
+            let mut pipe = redis::pipe();
+            for key in keys {
+                pipe.cmd("UNLINK").arg(key);
+            }
+            pipe.query_async(&mut *conn).await?;
+        }
+        
+        if next_cursor == 0 {
+            break;
+        }
+        cursor = next_cursor;
     }
+    
+    Ok(())
+}
+
+/// Clean global Redis structures that can cause conflicts between tests
+/// This is now deprecated in favor of namespace-based isolation
+pub async fn clean_redis_globals(pool: &RedisPool) -> Result<()> {
+    // For backward compatibility, still do a FLUSHDB
+    // But new tests should use namespace isolation instead
+    let mut conn = pool.get().await?;
+    redis::cmd("FLUSHDB")
+        .query_async::<()>(&mut *conn)
+        .await?;
     Ok(())
 }
 
@@ -57,6 +108,56 @@ pub fn generate_test_pubkey_hex() -> String {
     let id = get_unique_test_id();
     // Generate a valid 32-byte hex string (64 chars)
     format!("{:064x}", id)
+}
+
+/// Wait for a condition to become true, polling at intervals
+pub async fn wait_for_condition<F, Fut>(
+    mut check: F,
+    poll_interval: Duration,
+    timeout: Duration,
+) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let start = Instant::now();
+    
+    loop {
+        if check().await {
+            return Ok(());
+        }
+        
+        if start.elapsed() > timeout {
+            return Err(anyhow::anyhow!("Timeout waiting for condition after {:?}", timeout));
+        }
+        
+        tokio::time::sleep(poll_interval).await;
+    }
+}
+
+/// Wait for a value to be available, polling at intervals
+pub async fn wait_for_value<F, Fut, T>(
+    mut get_value: F,
+    poll_interval: Duration,
+    timeout: Duration,
+) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Option<T>>,
+{
+    let start = Instant::now();
+    
+    loop {
+        if let Some(value) = get_value().await {
+            return Ok(value);
+        }
+        
+        if start.elapsed() > timeout {
+            return Err(anyhow::anyhow!("Timeout waiting for value after {:?}", timeout));
+        }
+        
+        tokio::time::sleep(poll_interval).await;
+    }
 }
 
 #[cfg(test)]

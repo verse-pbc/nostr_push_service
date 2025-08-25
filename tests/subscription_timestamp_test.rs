@@ -54,9 +54,7 @@ async fn setup_test_state() -> Result<(Arc<AppState>, Arc<nostr_push_service::fc
     
     let redis_pool = redis_store::create_pool(&redis_url, settings.redis.connection_pool_size).await?;
     
-    // Clean up Redis
-    // Clean the test database (only affects the isolated test DB)
-    common::setup_test_db(&redis_pool).await?;
+    // Don't clean Redis - we use unique test data for isolation
 
     let mock_fcm = nostr_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_arc = Arc::new(mock_fcm.clone());
@@ -125,9 +123,10 @@ async fn process_event_with_context(
         let subscriptions = redis_store::get_subscriptions_with_timestamps(&state.redis_pool, &user_pubkey).await?;
         
         for (filter_json, subscription_timestamp) in subscriptions {
-            // Check timestamp - skip if event is older than subscription
+            // Check timestamp - skip if event is older than or equal to subscription
+            // Use strict > as per expert recommendation to avoid edge duplicates
             let event_time = event.created_at.as_u64();
-            if event_time < subscription_timestamp {
+            if event_time <= subscription_timestamp {
                 continue;
             }
             
@@ -178,19 +177,22 @@ async fn test_subscription_respects_timestamp() -> anyhow::Result<()> {
     let token = format!("test_token_{}", unique_test_id());
     register_user_token(&state, &user_keys, &token).await?;
     
+    // Use a unique kind for this test to avoid conflicts
+    let test_kind = Kind::Custom(30000 + (common::get_unique_test_id() % 1000) as u16);
+    
     // Create an old event (before subscription) with explicit timestamp
     let old_timestamp = Timestamp::now() - Duration::from_secs(10); // 10 seconds ago
     let old_event = EventBuilder::new(
-        Kind::Custom(9),
+        test_kind,
         "Old message that should not trigger notification"
     )
     .custom_created_at(old_timestamp)
     .sign(&sender_keys)
     .await?;
     
-    // Now subscribe to kind 9 events
+    // Now subscribe to this specific kind
     let subscription_time = Timestamp::now();
-    let filter = nostr_sdk::Filter::new().kinds(vec![Kind::Custom(9)]);
+    let filter = nostr_sdk::Filter::new().kinds(vec![test_kind]);
     let filter_json = serde_json::to_string(&filter)?;
     
     redis_store::add_subscription_with_timestamp(
@@ -203,7 +205,7 @@ async fn test_subscription_respects_timestamp() -> anyhow::Result<()> {
     // Create a new event (after subscription)
     let new_timestamp = Timestamp::now() + Duration::from_secs(10); // 10 seconds from now
     let new_event = EventBuilder::new(
-        Kind::Custom(9),
+        test_kind,
         "New message that should trigger notification"
     )
     .custom_created_at(new_timestamp)
@@ -211,12 +213,6 @@ async fn test_subscription_respects_timestamp() -> anyhow::Result<()> {
     .await?;
     
     // Process the old event - should NOT send notification
-    // First clear any processed events to ensure a clean test
-    {
-        let mut conn = state.redis_pool.get().await?;
-        redis::cmd("DEL").arg("processed_nostr_events").query_async::<()>(&mut *conn).await?;
-    }
-    
     let old_result = process_event_with_context(
         &state,
         &old_event,
@@ -224,12 +220,6 @@ async fn test_subscription_respects_timestamp() -> anyhow::Result<()> {
     ).await?;
     
     assert_eq!(old_result, 0, "Should not send notification for event before subscription");
-    
-    // Clear processed events again for the new event test
-    {
-        let mut conn = state.redis_pool.get().await?;
-        redis::cmd("DEL").arg("processed_nostr_events").query_async::<()>(&mut *conn).await?;
-    }
     
     // Process the new event - should send notification
     let new_result = process_event_with_context(
@@ -254,10 +244,13 @@ async fn test_historical_events_skip_mentions() -> anyhow::Result<()> {
     // Register mentioned user with FCM token
     register_user_token(&state, &mentioned_keys, "mentioned_token_123").await?;
     
-    // Create event with mention
-    let event = EventBuilder::new(
-        Kind::Custom(9),
-        format!("Hello @{}", mentioned_pubkey.to_bech32()?)
+    // Use unique kind to avoid conflicts
+    let test_kind = Kind::Custom(31000 + (common::get_unique_test_id() % 1000) as u16);
+    
+    // Create event with mention for historical test
+    let historical_event = EventBuilder::new(
+        test_kind,
+        format!("Hello @{} (historical)", mentioned_pubkey.to_bech32()?)
     )
     .tag(Tag::public_key(mentioned_pubkey))
     .sign(&sender_keys)
@@ -266,22 +259,25 @@ async fn test_historical_events_skip_mentions() -> anyhow::Result<()> {
     // Process as historical event - should NOT send mention notification
     let result = process_event_with_context(
         &state,
-        &event,
+        &historical_event,
         EventContext::Historical,
     ).await?;
     
     assert_eq!(result, 0, "Historical events should not trigger mention notifications");
     
-    // Clear processed events for the live event test
-    {
-        let mut conn = state.redis_pool.get().await?;
-        redis::cmd("DEL").arg("processed_nostr_events").query_async::<()>(&mut *conn).await?;
-    }
+    // Create a different event for live test
+    let live_event = EventBuilder::new(
+        test_kind,
+        format!("Hello @{} (live)", mentioned_pubkey.to_bech32()?)
+    )
+    .tag(Tag::public_key(mentioned_pubkey))
+    .sign(&sender_keys)
+    .await?;
     
-    // Process same event as live - should send mention notification
+    // Process as live - should send mention notification
     let result = process_event_with_context(
         &state,
-        &event,
+        &live_event,
         EventContext::Live,
     ).await?;
     
@@ -294,8 +290,11 @@ async fn test_historical_events_skip_mentions() -> anyhow::Result<()> {
 async fn test_processed_events_persist_across_restart() -> anyhow::Result<()> {
     // Setup
     let (state, _fcm_mock) = setup_test_state().await?;
+    
+    // Use unique kind to avoid conflicts
+    let test_kind = Kind::Custom(32000 + (common::get_unique_test_id() % 1000) as u16);
     let event = EventBuilder::new(
-        Kind::Custom(9),
+        test_kind,
         "Test message"
     )
     .sign(&Keys::generate())
@@ -346,9 +345,12 @@ async fn test_subscription_filter_with_multiple_users() -> anyhow::Result<()> {
     register_user_token(&state, &user2_keys, "token2").await?;
     register_user_token(&state, &user3_keys, "token3").await?;
     
+    // Use unique kind to avoid conflicts
+    let test_kind = Kind::Custom(33000 + (common::get_unique_test_id() % 1000) as u16);
+    
     // Create an event
     let event = EventBuilder::new(
-        Kind::Custom(9),
+        test_kind,
         "Test message for subscription timing"
     )
     .sign(&sender_keys)
@@ -356,7 +358,7 @@ async fn test_subscription_filter_with_multiple_users() -> anyhow::Result<()> {
     
     // User 1 subscribes BEFORE the event
     let early_time = Timestamp::now() - Duration::from_secs(3600); // 1 hour ago
-    let filter = nostr_sdk::Filter::new().kinds(vec![Kind::Custom(9)]);
+    let filter = nostr_sdk::Filter::new().kinds(vec![test_kind]);
     let filter_json = serde_json::to_string(&filter)?;
     
     redis_store::add_subscription_with_timestamp(

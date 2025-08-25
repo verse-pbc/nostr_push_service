@@ -67,9 +67,7 @@ async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
-    // Flush Redis DB for test isolation (tests run serially)
-    common::setup_test_db(pool).await?;
-    Ok(())
+    common::clean_redis_globals(pool).await
 }
 
 #[tokio::test]

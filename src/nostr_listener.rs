@@ -20,7 +20,9 @@ pub async fn run(
     let service_keys = state
         .service_keys
         .clone()
-        .ok_or_else(|| ServiceError::Internal("Nostr service keys not configured".to_string()))?;
+        .ok_or_else(|| {
+            ServiceError::Internal("Nostr service keys not configured".to_string())
+        })?;
     let service_pubkey = service_keys.public_key();
 
     // Get the shared Nostr client from AppState (via Nip29Client)
@@ -67,6 +69,7 @@ pub async fn run(
             }
         })
         .collect::<Vec<_>>();
+    
 
     let historical_filter = Filter::new()
         .kinds(historical_kinds.clone())
@@ -145,7 +148,8 @@ pub async fn run(
 
     info!("Subscribing to live events...");
     // Use the timestamp from before historical fetch to avoid missing events
-    let live_filter = Filter::new().kinds(historical_kinds).since(subscription_since);
+    let live_filter = Filter::new().kinds(historical_kinds.clone()).since(subscription_since);
+    info!("Live filter kinds: {:?}", historical_kinds);
 
     tokio::select! {
         biased;
@@ -173,7 +177,7 @@ pub async fn run(
              }
 
             res = notifications.recv() => {
-                 match res {
+                  match res {
                     Ok(notification) => {
                         match notification {
                             nostr_sdk::RelayPoolNotification::Event { event, .. } => {

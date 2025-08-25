@@ -30,8 +30,7 @@ const KIND_SUBSCRIPTION_UPSERT: Kind = Kind::Custom(3081);
 const KIND_SUBSCRIPTION_DELETE: Kind = Kind::Custom(3082);
 const KIND_DM: Kind = Kind::Custom(1059); // NIP-17 Private Direct Messages
 const BROADCASTABLE_EVENT_KINDS: [Kind; 1] = [Kind::Custom(9)]; // Only kind 9 is broadcastable
-const KIND_GROUP_MESSAGE: Kind = Kind::Custom(9); // NIP-29 chat message
-const KIND_GROUP_REPLY: Kind = Kind::Custom(10); // NIP-29 chat reply (not broadcastable)
+// Note: Group messages are now identified by presence of 'h' tag, not by specific kinds
 
 // Replay horizon: ignore events older than this
 const REPLAY_HORIZON_DAYS: u64 = 7;
@@ -104,15 +103,14 @@ pub async fn run(
                     handle_subscription_delete(&state, &event, token.clone()).await
                 } else if event_kind == KIND_DM {
                     handle_dm(&state, &event, token.clone()).await
-                } else if event_kind == KIND_GROUP_MESSAGE || event_kind == KIND_GROUP_REPLY {
-                    // Handle group messages (mentions and group members)
-                    let group_result = handle_group_message(&state, &event, token.clone()).await;
-                    // Also check custom subscriptions for kind 9/10 events
-                    let subscription_result = handle_custom_subscriptions(&state, &event, context, token.clone()).await;
-                    // Return the first error if any, otherwise Ok
-                    group_result.and(subscription_result)
+                } else if event.tags.find(TagKind::h()).is_some() {
+                    // Handle events with 'h' tag (group-scoped events)
+                    // This includes group messages, replies, and any other group-scoped events
+                    // Note: We only run the group handler, not custom subscriptions, to avoid duplicate notifications
+                    // for mentions that are already handled by the group logic
+                    handle_group_message(&state, &event, token.clone()).await
                 } else {
-                    // For all other kinds, check user subscriptions
+                    // For all other events (including non-group kind 9/10), check user subscriptions
                     handle_custom_subscriptions(&state, &event, context, token.clone()).await
                 };
 
@@ -179,7 +177,13 @@ async fn handle_registration(state: &AppState, event: &Event) -> Result<()> {
         return Ok(());
     }
 
-    redis_store::add_or_update_token(&state.redis_pool, &event.pubkey, fcm_token).await?;
+    match redis_store::add_or_update_token(&state.redis_pool, &event.pubkey, fcm_token).await {
+        Ok(_) => {
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
     info!(event_id = %event.id, pubkey = %event.pubkey, "Registered/Updated token");
     Ok(())
 }
@@ -340,69 +344,29 @@ pub async fn handle_subscription_delete(
     Ok(())
 }
 
+/// Handle group-scoped events (events with 'h' tag) by checking mentions and group membership.
+/// For broadcast messages, notify all group members.
 async fn handle_group_message(
     state: &AppState,
     event: &Event,
     token: CancellationToken,
 ) -> Result<()> {
-    debug!(event_id = %event.id, kind = %event.kind, "Handling group message/reply");
+    debug!(event_id = %event.id, kind = %event.kind, "Handling group-scoped event");
 
     if token.is_cancelled() {
         info!(event_id = %event.id, "Cancelled before handling group message.");
         return Err(crate::error::ServiceError::Cancelled);
     }
 
-    // Extract the group ID from the first 'h' tag found
-    let group_id = event.tags.find(TagKind::h()).and_then(|tag| tag.content());
-
-    // If no group ID, treat this as a regular mention-based message
-    let Some(group_id) = group_id else {
-        debug!(event_id = %event.id, "No 'h' tag found, treating as regular mention-based kind 9 event");
-        
-        // Process mentions without group membership checks
-        let mentioned_pubkeys = extract_mentioned_pubkeys(event);
-        debug!(event_id = %event.id, mentions = mentioned_pubkeys.len(), "Extracted mentioned pubkeys for non-group message");
-        
-        if mentioned_pubkeys.is_empty() {
-            debug!(event_id = %event.id, "No mentioned pubkeys found in non-group message, skipping notification.");
-            return Ok(());
-        }
-        
-        for target_pubkey in mentioned_pubkeys {
-            if token.is_cancelled() {
-                info!(event_id = %event.id, "Cancelled during non-group message processing.");
-                return Err(crate::error::ServiceError::Cancelled);
-            }
-            
-            if target_pubkey == event.pubkey {
-                info!(
-                    event_id = %event.id, 
-                    target_npub = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
-                    sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
-                    "Skipping notification to self in non-group message"
-                );
-                continue;
-            }
-            
-            // Send notification without group membership check
-            info!(
-                event_id = %event.id, 
-                target_npub = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
-                sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
-                "Sending notification for non-group mention"
-            );
-            if let Err(e) = send_notification_to_user(state, event, &target_pubkey, token.clone()).await {
-                if matches!(e, crate::error::ServiceError::Cancelled) {
-                    return Err(e);
-                }
-                error!(event_id = %event.id, target_pubkey = %target_pubkey, error = %e, "Failed to send notification to user");
-            }
-        }
-        
-        debug!(event_id = %event.id, "Finished handling non-group kind 9 message");
-        return Ok(());
-    };
-    debug!(event_id = %event.id, %group_id, "Extracted group ID");
+    // Extract the group ID from the 'h' tag (we know it exists because the dispatcher checked)
+    let group_id = event.tags.find(TagKind::h())
+        .and_then(|tag| tag.content())
+        .ok_or_else(|| {
+            error!(event_id = %event.id, "Expected 'h' tag but not found");
+            crate::error::ServiceError::Internal("Missing expected 'h' tag".to_string())
+        })?;
+    
+    debug!(event_id = %event.id, %group_id, "Processing group-scoped event");
 
     // Check if this is a broadcast message (has a 'broadcast' tag)
     let is_broadcast = event.tags.find(TagKind::custom("broadcast")).is_some();
@@ -742,7 +706,8 @@ pub async fn handle_custom_subscriptions(
         for (filter_json, subscription_timestamp) in subscriptions_with_timestamps {
             // For Live events: always check timestamps - don't send notifications for events that occurred before subscription
             // For Historical events: also check timestamps during replay
-            if event_timestamp < subscription_timestamp {
+            // Use strict > (i.e., skip if <=) as per best practice to avoid edge duplicates
+            if event_timestamp <= subscription_timestamp {
                 trace!(
                     event_id = %event.id, 
                     user = %user_pubkey, 

@@ -41,6 +41,7 @@ pub async fn get_tokens_for_pubkey(pool: &RedisPool, pubkey: &PublicKey) -> Resu
         .query_async(&mut *conn)
         .await
         .map_err(ServiceError::Redis)?;
+    
 
     Ok(tokens)
 }
@@ -123,7 +124,9 @@ pub async fn add_or_update_token(pool: &RedisPool, pubkey: &PublicKey, token: &s
     let mut conn = pool
         .get()
         .await
-        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+        .map_err(|e| {
+            ServiceError::Internal(format!("Failed to get Redis connection: {}", e))
+        })?;
 
     // Check if this token is already associated with a different pubkey
     let existing_pubkey: Option<String> = redis::cmd("HGET")
@@ -152,10 +155,10 @@ pub async fn add_or_update_token(pool: &RedisPool, pubkey: &PublicKey, token: &s
         .zadd(STALE_TOKENS_ZSET, token, now_timestamp) // Add/update token in sorted set with current timestamp
         .hset(TOKEN_TO_PUBKEY_HASH, token, &pubkey_hex); // Map token back to pubkey
 
-    pipe.query_async::<Value>(&mut *conn) // Specify the expected return type 'Value'
+    let _result = pipe.query_async::<Value>(&mut *conn) // Specify the expected return type 'Value'
         .await
-        .map(|_| ()) // Discard the pipeline result, interested only in errors
-        .map_err(ServiceError::Redis)
+        .map_err(ServiceError::Redis)?;
+    Ok(())
 }
 
 /// Removes a single device token for a pubkey.
