@@ -8,7 +8,6 @@ use nostr_push_service::{
     redis_store::{self},
     state::AppState,
 };
-use std::env;
 use std::sync::Arc;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

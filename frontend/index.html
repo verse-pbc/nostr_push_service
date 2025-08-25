@@ -439,8 +439,16 @@
             return false;
         }
 
-        window.addEventListener('load', async () => {
-            log('Initializing...', 'info');
+        // Function to initialize the app
+        async function initializeApp() {
+            try {
+                const APP_VERSION = '7.4-sw-cache-fix';
+                console.log(`[INIT] Initializing... (Version: ${APP_VERSION})`);
+                log(`Initializing... (Version: ${APP_VERSION})`, 'info');
+                console.log(`[INIT] Page loaded at: ${new Date().toISOString()}`);
+                log(`Page loaded at: ${new Date().toISOString()}`, 'info');
+                console.log(`[INIT] Cache-buster: ${window.location.search}`);
+                log(`Cache-buster: ${window.location.search}`, 'info');
             
             // Detect if running as installed PWA
             const isPWA = window.matchMedia('(display-mode: standalone)').matches || 
@@ -520,21 +528,136 @@
             generateKeys();
             
             // Initialize Firebase
-            await initializeFirebase();
+            log('Starting Firebase initialization...', 'info');
+            const firebaseResult = await initializeFirebase();
+            log(`Firebase initialization complete, result: ${firebaseResult}`, 'info');
             
-            // Register service worker early (once) to avoid duplicates
-            if ('serviceWorker' in navigator) {
+            // Comprehensive SW registration with iOS PWA debugging
+            try {
+                log('About to check for ServiceWorker API...', 'info');
+                const hasServiceWorker = 'serviceWorker' in navigator;
+                log(`ServiceWorker in navigator: ${hasServiceWorker}`, 'info');
+                
+                if (!hasServiceWorker) {
+                log('❌ ServiceWorker API not available in navigator!', 'error');
+                log(`User Agent: ${navigator.userAgent}`, 'error');
+            } else {
+                log('✅ ServiceWorker API is available', 'info');
                 try {
-                    let registration = await navigator.serviceWorker.getRegistration('/');
-                    if (!registration) {
-                        registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
-                        log('Service worker registered during initialization', 'success');
-                    } else {
-                        log(`Service worker already registered (scope: ${registration.scope})`, 'info');
+                    log('Starting SW registration process...', 'info');
+                    log(`navigator.serviceWorker supported: ${!!navigator.serviceWorker}`, 'info');
+                    log(`Current page URL: ${window.location.href}`, 'info');
+                    log(`Current page protocol: ${window.location.protocol}`, 'info');
+                    log(`Is secure context: ${window.isSecureContext}`, 'info');
+                    
+                    // Special handling for iOS PWA
+                    if (isIOS && isStandalone) {
+                        log('iOS PWA detected - adding delay before SW registration...', 'info');
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        log('Delay complete, proceeding with registration', 'info');
                     }
+                    
+                    // First verify the files exist
+                    for (const url of ['/firebase-messaging-sw.js', '/firebase-config.js']) {
+                        try {
+                            const r = await fetch(url, { cache: 'no-store' });
+                            log(`Fetch ${url}: ${r.status} ${r.ok ? 'OK' : 'FAIL'}`, r.ok ? 'info' : 'error');
+                            if (!r.ok) {
+                                const text = await r.text();
+                                log(`Response for ${url}: ${text.substring(0, 200)}`, 'error');
+                            }
+                            if (!r.ok) {
+                                log(`Critical: ${url} returned ${r.status} - SW registration will fail`, 'error');
+                            }
+                        } catch (e) {
+                            log(`Fetch ${url} failed: ${e.message}`, 'error');
+                        }
+                    }
+                    
+                    // Check current registration state
+                    let registration = await navigator.serviceWorker.getRegistration('/');
+                    log(`Existing registration: ${registration ? 'YES' : 'NO'}`, 'info');
+                    
+                    if (!registration) {
+                        log('No existing SW, registering /firebase-messaging-sw.js with scope /...', 'info');
+                        
+                        // Add state change listeners before registration
+                        navigator.serviceWorker.addEventListener('statechange', (e) => {
+                            log(`SW state changed: ${e.target.state}`, 'info');
+                        });
+                        
+                        navigator.serviceWorker.addEventListener('controllerchange', () => {
+                            log('Controller changed - SW now controlling page', 'success');
+                        });
+                        
+                        try {
+                            registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+                            log(`SW registered successfully, scope: ${registration.scope}`, 'success');
+                        } catch (regError) {
+                            log(`SW registration failed: ${regError.message}`, 'error');
+                            log(`Error details: ${JSON.stringify({name: regError.name, message: regError.message})}`, 'error');
+                            throw regError;
+                        }
+                        
+                        // Track installation/activation
+                        if (registration.installing) {
+                            log('SW is installing...', 'info');
+                            registration.installing.addEventListener('statechange', function() {
+                                log(`Installing SW state: ${this.state}`, 'info');
+                            });
+                        }
+                        
+                        if (registration.waiting) {
+                            log('SW is waiting to activate...', 'info');
+                        }
+                        
+                        if (registration.active) {
+                            log('SW is already active', 'info');
+                        }
+                        
+                        // Wait for activation
+                        log('Waiting for SW to be ready...', 'info');
+                        await navigator.serviceWorker.ready;
+                        log('SW is ready', 'success');
+                        
+                        // Check controller
+                        if (!navigator.serviceWorker.controller) {
+                            log('SW not controlling page yet, waiting for controllerchange...', 'info');
+                            await new Promise(res => navigator.serviceWorker.addEventListener('controllerchange', res, { once: true }));
+                        }
+                        log(`SW active + controlling (scope: ${registration.scope})`, 'success');
+                    } else {
+                        log(`SW already registered (scope: ${registration.scope})`, 'info');
+                        log(`SW active: ${registration.active ? 'YES' : 'NO'}`, 'info');
+                        log(`SW installing: ${registration.installing ? 'YES' : 'NO'}`, 'info');
+                        log(`SW waiting: ${registration.waiting ? 'YES' : 'NO'}`, 'info');
+                        log(`Page controlled: ${navigator.serviceWorker.controller ? 'YES' : 'NO'}`, 'info');
+                        
+                        // Try to update
+                        registration.update().then(() => {
+                            log('SW update check completed', 'info');
+                        }).catch(err => {
+                            log(`SW update check failed: ${err.message}`, 'warning');
+                        });
+                    }
+                    
+                    // Final verification
+                    const finalReg = await navigator.serviceWorker.getRegistration('/');
+                    if (finalReg && finalReg.active) {
+                        log('✅ SW registration verified - ready for push', 'success');
+                        updateServiceWorkerCount();
+                    } else {
+                        log('⚠️ SW registration incomplete', 'error');
+                    }
+                    
                 } catch (err) {
-                    log(`Service worker registration failed: ${err.message}`, 'error');
+                    log(`SW registration error: ${err.message}`, 'error');
+                    log(`Full error: ${err.stack}`, 'error');
                 }
+            }
+            } catch (swInitError) {
+                log(`Critical error during SW initialization: ${swInitError.message}`, 'error');
+                log(`Error stack: ${swInitError.stack}`, 'error');
             }
             
             // Connect to relay
@@ -559,7 +682,23 @@
             } else {
                 log('Initialization incomplete - some components failed to load', 'warning');
             }
-        });
+            } catch (initError) {
+                log(`CRITICAL ERROR during initialization: ${initError.message}`, 'error');
+                log(`Error stack: ${initError.stack}`, 'error');
+                log(`Error occurred at: ${new Date().toISOString()}`, 'error');
+            }
+        }
+        
+        // Call initialization - handles both normal load and service worker cached pages
+        if (document.readyState === 'complete') {
+            // Page already loaded (likely from service worker cache)
+            console.log('[INIT] Page already loaded, initializing immediately');
+            initializeApp();
+        } else {
+            // Wait for page to load
+            console.log('[INIT] Waiting for page load event');
+            window.addEventListener('load', initializeApp);
+        }
 
         function generateKeys() {
             try {
@@ -713,12 +852,23 @@
                     if (isIOS && isPWA) {
                         log('iOS PWA detected - ensuring service worker is ready...', 'info');
                         
-                        // Wait for service worker to be ready
-                        try {
-                            const registration = await navigator.serviceWorker.ready;
-                            log(`Service Worker ready (scope: ${registration.scope})`, 'success');
-                        } catch (e) {
-                            log(`Service Worker ready wait failed: ${e.message}`, 'error');
+                        // Check if a service worker is already registered
+                        const existingReg = await navigator.serviceWorker.getRegistration('/');
+                        if (existingReg) {
+                            log('Existing service worker found, waiting for it to be ready...', 'info');
+                            try {
+                                // Wait with a timeout
+                                const readyPromise = navigator.serviceWorker.ready;
+                                const timeoutPromise = new Promise((_, reject) => 
+                                    setTimeout(() => reject(new Error('Timeout waiting for SW')), 5000)
+                                );
+                                const registration = await Promise.race([readyPromise, timeoutPromise]);
+                                log(`Service Worker ready (scope: ${registration.scope})`, 'success');
+                            } catch (e) {
+                                log(`Service Worker ready wait failed or timed out: ${e.message}`, 'warning');
+                            }
+                        } else {
+                            log('No service worker registered yet, skipping ready wait', 'info');
                         }
                     }
                     
@@ -1677,20 +1827,25 @@
         }
 
         async function updateServiceWorkerCount() {
-            if ('serviceWorker' in navigator) {
-                const registrations = await navigator.serviceWorker.getRegistrations();
-                document.getElementById('swCount').textContent = registrations.length;
+            if (!('serviceWorker' in navigator)) return;
+            const [reg1, regs] = await Promise.all([
+                navigator.serviceWorker.getRegistration('/'),
+                navigator.serviceWorker.getRegistrations?.() ?? Promise.resolve([])
+            ]);
+            const unique = new Set(regs.map(r => r.scope));
+            if (reg1) unique.add(reg1.scope);
+            document.getElementById('swCount').textContent = String(unique.size);
                 
                 // Log details about each registration if there are multiple
-                if (registrations.length > 1) {
-                    log(`WARNING: ${registrations.length} service workers registered!`, 'warning');
-                    registrations.forEach((reg, index) => {
+                if (unique.size > 1) {
+                    log(`WARNING: ${unique.size} service workers registered!`, 'warning');
+                    regs.forEach((reg, index) => {
                         log(`SW ${index + 1}: scope=${reg.scope}, state=${reg.active?.state || 'no active worker'}`, 'warning');
                     });
                     
                     // Clean up duplicates - keep only the one with scope '/'
-                    const mainReg = registrations.find(r => r.scope.endsWith('/'));
-                    for (const reg of registrations) {
+                    const mainReg = regs.find(r => r.scope.endsWith('/'));
+                    for (const reg of regs) {
                         if (reg !== mainReg) {
                             log(`Unregistering duplicate SW with scope: ${reg.scope}`, 'info');
                             reg.unregister().then(() => {
@@ -1703,7 +1858,6 @@
                     }
                 }
             }
-        }
 
         function log(message, type = 'info') {
             const time = new Date().toLocaleTimeString('en-US', { 
@@ -1724,6 +1878,15 @@
             while (logs.children.length > 50) {
                 logs.removeChild(logs.firstChild);
             }
+        }
+        
+        // Receive logs from the Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', (e) => {
+                const msg = e.data;
+                if (!msg || !msg.__SW_LOG__) return;
+                log(`[SW] ${msg.level}: ${msg.text}`, msg.level === 'error' ? 'error' : 'info');
+            });
         }
     </script>
 </body>

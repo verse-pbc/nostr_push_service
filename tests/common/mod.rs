@@ -14,22 +14,27 @@ use uuid::Uuid;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Track if we've cleaned Redis once at startup
+#[allow(dead_code)]
 static REDIS_CLEANED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 /// Namespace for test isolation in Redis
+#[allow(dead_code)]
 pub struct TestNamespace(String);
 
 impl TestNamespace {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         // Use hash-tag to keep related keys co-located in Redis Cluster
         let uuid = Uuid::new_v4();
         Self(format!("test:{{{}}}", uuid))
     }
     
+    #[allow(dead_code)]
     pub fn key(&self, k: &str) -> String {
         format!("{}:{}", self.0, k)
     }
     
+    #[allow(dead_code)]
     pub fn pattern(&self) -> String {
         format!("{}:*", self.0)
     }
@@ -48,6 +53,7 @@ pub fn create_test_redis_url() -> String {
 }
 
 /// Wipe a specific namespace in Redis using SCAN + UNLINK
+#[allow(dead_code)]
 pub async fn wipe_namespace(pool: &RedisPool, ns: &TestNamespace) -> Result<()> {
     let mut conn = pool.get().await?;
     let mut cursor: u64 = 0;
@@ -67,7 +73,7 @@ pub async fn wipe_namespace(pool: &RedisPool, ns: &TestNamespace) -> Result<()> 
             for key in keys {
                 pipe.cmd("UNLINK").arg(key);
             }
-            pipe.query_async(&mut *conn).await?;
+            pipe.query_async::<()>(&mut *conn).await?;
         }
         
         if next_cursor == 0 {
@@ -81,6 +87,7 @@ pub async fn wipe_namespace(pool: &RedisPool, ns: &TestNamespace) -> Result<()> 
 
 /// Clean global Redis structures that can cause conflicts between tests
 /// This is now deprecated in favor of namespace-based isolation
+#[allow(dead_code)]
 pub async fn clean_redis_globals(pool: &RedisPool) -> Result<()> {
     // For backward compatibility, still do a FLUSHDB
     // But new tests should use namespace isolation instead
@@ -92,6 +99,7 @@ pub async fn clean_redis_globals(pool: &RedisPool) -> Result<()> {
 }
 
 /// No-op function to replace per-test cleanup
+#[allow(dead_code)]
 pub async fn setup_test_db(_pool: &RedisPool) -> Result<()> {
     // No longer flush per test - we use unique test data instead
     Ok(())
@@ -104,6 +112,7 @@ pub fn generate_test_token(prefix: &str) -> String {
 }
 
 /// Generate unique test pubkey hex
+#[allow(dead_code)]
 pub fn generate_test_pubkey_hex() -> String {
     let id = get_unique_test_id();
     // Generate a valid 32-byte hex string (64 chars)
@@ -111,6 +120,7 @@ pub fn generate_test_pubkey_hex() -> String {
 }
 
 /// Wait for a condition to become true, polling at intervals
+#[allow(dead_code)]
 pub async fn wait_for_condition<F, Fut>(
     mut check: F,
     poll_interval: Duration,
@@ -136,6 +146,7 @@ where
 }
 
 /// Wait for a value to be available, polling at intervals
+#[allow(dead_code)]
 pub async fn wait_for_value<F, Fut, T>(
     mut get_value: F,
     poll_interval: Duration,
