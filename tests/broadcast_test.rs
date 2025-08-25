@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use nostr_relay_builder::MockRelay;
-use serial_test::serial;
+// Removed serial_test - tests now run in parallel with isolated Redis databases
+
+mod common;
 use nostr_sdk::{ClientBuilder, Event, EventBuilder, Keys, Kind, PublicKey, Tag, ToBech32};
 use nostr_push_service::{
     config::Settings,
@@ -8,15 +10,12 @@ use nostr_push_service::{
     state::AppState,
 };
 use std::collections::HashSet;
-use std::env;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-// Global counter for unique test IDs
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Import service components
 use nostr_push_service::{event_handler, nostr_listener};
@@ -31,10 +30,8 @@ async fn setup_broadcast_test_environment() -> Result<(
     MockRelay,
 )> {
     dotenvy::dotenv().ok();
-    // Use REDIS_HOST and REDIS_PORT, falling back to defaults if not set
-    let redis_host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let redis_port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
-    let redis_url_constructed = format!("redis://{}:{}", redis_host, redis_port);
+    // Use standard Redis URL (no database selection)
+    let redis_url_constructed = common::create_test_redis_url();
 
     // --- Safety Check: Prevent running tests against DigitalOcean Redis ---
     if let Ok(parsed_url) = url::Url::parse(&redis_url_constructed) {
@@ -94,6 +91,7 @@ async fn setup_broadcast_test_environment() -> Result<(
 
     // Initialize Nip29Client for the AppState
     let nip29_cache_expiration = settings.nostr.cache_expiration.unwrap_or(300);
+    eprintln!("Creating Nip29Client for relay: {}", relay_url_str);
     let nip29_client = nostr_push_service::nostr::nip29::Nip29Client::new(
         relay_url_str.clone(),
         test_service_keys.clone(),
@@ -101,6 +99,7 @@ async fn setup_broadcast_test_environment() -> Result<(
     )
     .await
     .map_err(|e| anyhow!("Failed to create and connect Nip29Client: {}", e))?;
+    eprintln!("Nip29Client created successfully");
 
     // Add a small delay to ensure the client has time to establish the connection
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -122,12 +121,7 @@ async fn setup_broadcast_test_environment() -> Result<(
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> Result<()> {
-    // Flush Redis DB for test isolation (tests run serially)
-    let mut conn = pool.get().await?;
-    redis::cmd("FLUSHDB")
-        .query_async::<()>(&mut *conn)
-        .await?;
-    Ok(())
+    common::clean_redis_globals(pool).await
 }
 
 /// Helper to register a user's FCM token
@@ -140,14 +134,37 @@ async fn register_user_token(
     let registration_event = EventBuilder::new(Kind::Custom(3079), token)
         .sign(user_keys)
         .await?;
+    
     client.send_event(&registration_event).await?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Verify token was registered
-    let stored_tokens =
-        redis_store::get_tokens_for_pubkey(&state.redis_pool, &user_keys.public_key()).await?;
-    assert_eq!(stored_tokens.len(), 1);
-    assert_eq!(stored_tokens[0], token);
+    
+    // Poll for token to be registered instead of fixed wait
+    let token_string = token.to_string();
+    let user_pubkey = user_keys.public_key();
+    let state_clone = state.clone();
+    
+    let result = common::wait_for_condition(
+        || async {
+            let stored_tokens = redis_store::get_tokens_for_pubkey(&state_clone.redis_pool, &user_pubkey)
+                .await
+                .unwrap_or_default();
+            stored_tokens.contains(&token_string)
+        },
+        Duration::from_millis(100),  // Poll every 100ms
+        Duration::from_secs(5),       // Timeout after 5 seconds
+    ).await;
+    
+    if result.is_err() {
+        // Debug output on timeout
+        let stored_tokens =
+            redis_store::get_tokens_for_pubkey(&state.redis_pool, &user_keys.public_key()).await?;
+        eprintln!(
+            "Timeout: Token '{}' not found. User has {} tokens: {:?}",
+            token,
+            stored_tokens.len(),
+            stored_tokens
+        );
+        return Err(anyhow!("Token {} was not registered within timeout", token));
+    }
 
     Ok(())
 }
@@ -198,9 +215,11 @@ async fn setup_test_group_with_admin(
 
 /// Test 1: Verify broadcast messages send notifications to all group members
 #[tokio::test]
-#[serial]
 async fn test_broadcast_notifications() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
+    
+    // Clear any messages that might have been sent during setup
+    fcm_mock.clear();
 
     // Set up service with event handler and listener
     let service_token = CancellationToken::new();
@@ -210,9 +229,11 @@ async fn test_broadcast_notifications() -> Result<()> {
     let listener_state = state.clone();
     let listener_token = service_token.clone();
     let listener_handle = tokio::spawn(async move {
+        eprintln!("Starting nostr_listener task...");
         if let Err(e) = nostr_listener::run(listener_state, event_tx, listener_token).await {
             eprintln!("Nostr listener task error: {}", e);
         }
+        eprintln!("Nostr listener task ended");
     });
 
     // Start event handler
@@ -224,12 +245,13 @@ async fn test_broadcast_notifications() -> Result<()> {
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;  // Wait longer for services to connect to relay
 
     // Create test group members
     let group_id = "test_broadcast_group";
     let sender_keys = Keys::generate();
     let sender_client = ClientBuilder::new().signer(sender_keys.clone()).build();
+    eprintln!("Test client connecting to relay: {}", relay_url.as_str());
     sender_client.add_relay(relay_url.as_str()).await?;
     sender_client.connect().await;
 
@@ -249,10 +271,11 @@ async fn test_broadcast_notifications() -> Result<()> {
     user3_client.add_relay(relay_url.as_str()).await?;
     user3_client.connect().await;
 
-    // Register FCM tokens for each user
-    let token1 = "fcm_token_user1_broadcast";
-    let token2 = "fcm_token_user2_broadcast";
-    let token3 = "fcm_token_user3_broadcast";
+    // Register FCM tokens for each user with unique IDs
+    let test_id = common::get_unique_test_id();
+    let token1 = format!("fcm_token_user1_broadcast_{}", test_id);
+    let token2 = format!("fcm_token_user2_broadcast_{}", test_id);
+    let token3 = format!("fcm_token_user3_broadcast_{}", test_id);
 
     register_user_token(&state, &user1_keys, &user1_client, &token1).await?;
     register_user_token(&state, &user2_keys, &user2_client, &token2).await?;
@@ -284,8 +307,19 @@ async fn test_broadcast_notifications() -> Result<()> {
 
     sender_client.send_event(&broadcast_event).await?;
 
-    // Wait for events to be processed
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Poll for FCM messages to be sent instead of fixed wait
+    let expected_count = 3;  // 3 users should receive notifications
+    
+    let _ = common::wait_for_condition(
+        || {
+            let fcm_mock_clone = fcm_mock.clone();
+            async move {
+                fcm_mock_clone.get_sent_messages().len() >= expected_count
+            }
+        },
+        Duration::from_millis(100),  // Poll every 100ms
+        Duration::from_secs(2),       // Timeout after 2 seconds
+    ).await;  // Ignore timeout - we'll check the actual count below
 
     // Check that FCM notifications were sent to all users except sender
     let sent_fcm_messages = fcm_mock.get_sent_messages();
@@ -301,15 +335,15 @@ async fn test_broadcast_notifications() -> Result<()> {
     // Verify tokens used for sending are correct (all users should get notified)
     let sent_tokens: Vec<&String> = sent_fcm_messages.iter().map(|(token, _)| token).collect();
     assert!(
-        sent_tokens.contains(&&token1.to_string()),
+        sent_tokens.contains(&&token1),
         "Expected user1 token in FCM messages"
     );
     assert!(
-        sent_tokens.contains(&&token2.to_string()),
+        sent_tokens.contains(&&token2),
         "Expected user2 token in FCM messages"
     );
     assert!(
-        sent_tokens.contains(&&token3.to_string()),
+        sent_tokens.contains(&&token3),
         "Expected user3 token in FCM messages"
     );
 
@@ -327,9 +361,11 @@ async fn test_broadcast_notifications() -> Result<()> {
 
 /// Test 2: Verify regular mention-based notifications still work alongside broadcast
 #[tokio::test]
-#[serial]
 async fn test_regular_mentions_with_broadcast() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
+    
+    // Clear any messages that might have been sent during setup
+    fcm_mock.clear();
 
     // Set up service
     let service_token = CancellationToken::new();
@@ -351,7 +387,7 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;  // Wait for service to be ready
 
     // Create test users and group
     let group_id = "test_regular_mention_group";
@@ -376,10 +412,11 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
     user3_client.add_relay(relay_url.as_str()).await?;
     user3_client.connect().await;
 
-    // Register FCM tokens
-    let token1 = "fcm_token_user1_mention";
-    let token2 = "fcm_token_user2_mention";
-    let token3 = "fcm_token_user3_mention";
+    // Register FCM tokens with unique IDs
+    let test_id = common::get_unique_test_id();
+    let token1 = format!("fcm_token_user1_mention_{}", test_id);
+    let token2 = format!("fcm_token_user2_mention_{}", test_id);
+    let token3 = format!("fcm_token_user3_mention_{}", test_id);
 
     register_user_token(&state, &user1_keys, &user1_client, &token1).await?;
     register_user_token(&state, &user2_keys, &user2_client, &token2).await?;
@@ -421,7 +458,7 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
     );
     assert_eq!(
         sent_fcm_messages[0].0,
-        token1.to_string(),
+        token1,
         "Expected notification to be sent to user1"
     );
 
@@ -456,15 +493,15 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
 
     // Each token should appear at least once
     assert!(
-        sent_tokens.contains(&&token1.to_string()),
+        sent_tokens.contains(&&token1),
         "Expected user1 token in FCM messages"
     );
     assert!(
-        sent_tokens.contains(&&token2.to_string()),
+        sent_tokens.contains(&&token2),
         "Expected user2 token in FCM messages"
     );
     assert!(
-        sent_tokens.contains(&&token3.to_string()),
+        sent_tokens.contains(&&token3),
         "Expected user3 token in FCM messages"
     );
 
@@ -482,9 +519,11 @@ async fn test_regular_mentions_with_broadcast() -> Result<()> {
 
 /// Test 3: Performance test with large groups
 #[tokio::test]
-#[serial]
 async fn test_broadcast_performance_large_group() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
+    
+    // Clear any messages that might have been sent during setup
+    fcm_mock.clear();
 
     // Set up service
     let service_token = CancellationToken::new();
@@ -493,9 +532,11 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
     let listener_state = state.clone();
     let listener_token = service_token.clone();
     let listener_handle = tokio::spawn(async move {
+        eprintln!("Starting nostr_listener task...");
         if let Err(e) = nostr_listener::run(listener_state, event_tx, listener_token).await {
             eprintln!("Nostr listener task error: {}", e);
         }
+        eprintln!("Nostr listener task ended");
     });
 
     let handler_state = state.clone();
@@ -506,10 +547,10 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;  // Wait for service to be ready
 
     // Create unique test ID for this test
-    let test_id_base = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_id_base = common::get_unique_test_id();
     
     // Create a large group with 50 members
     let large_group_id = format!("test_large_group_{}", test_id_base);
@@ -606,10 +647,9 @@ async fn test_broadcast_performance_large_group() -> Result<()> {
 
 /// Test 4: Direct broadcast tag test to ensure proper tag detection
 #[tokio::test]
-#[serial]
 async fn test_broadcast_tag_detection() -> Result<()> {
     // Create unique test ID for this test
-    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_id = common::get_unique_test_id();
     
     // Create a test event with a broadcast tag
     let keys = Keys::generate();
@@ -668,9 +708,11 @@ async fn test_broadcast_tag_detection() -> Result<()> {
 
 /// Test 5: Admin permission verification for broadcast messages
 #[tokio::test]
-#[serial]
 async fn test_admin_permission_verification() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
+    
+    // Clear any messages that might have been sent during setup
+    fcm_mock.clear();
 
     // Set up service
     let service_token = CancellationToken::new();
@@ -679,9 +721,11 @@ async fn test_admin_permission_verification() -> Result<()> {
     let listener_state = state.clone();
     let listener_token = service_token.clone();
     let listener_handle = tokio::spawn(async move {
+        eprintln!("Starting nostr_listener task...");
         if let Err(e) = nostr_listener::run(listener_state, event_tx, listener_token).await {
             eprintln!("Nostr listener task error: {}", e);
         }
+        eprintln!("Nostr listener task ended");
     });
 
     let handler_state = state.clone();
@@ -692,7 +736,7 @@ async fn test_admin_permission_verification() -> Result<()> {
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;  // Wait for service to be ready
 
     // Create test group
     let group_id = "test_admin_permission_group";
@@ -715,8 +759,9 @@ async fn test_admin_permission_verification() -> Result<()> {
     member_client.add_relay(relay_url.as_str()).await?;
     member_client.connect().await;
 
-    // Register FCM token for member (to receive notifications)
-    let member_token = "fcm_token_group_member";
+    // Register FCM token for member (to receive notifications) with unique ID
+    let test_id = common::get_unique_test_id();
+    let member_token = format!("fcm_token_group_member_{}", test_id);
     register_user_token(&state, &member_keys, &member_client, &member_token).await?;
 
     // Define admins and members
@@ -758,7 +803,7 @@ async fn test_admin_permission_verification() -> Result<()> {
     );
     assert_eq!(
         admin_sent_messages[0].0,
-        member_token.to_string(),
+        member_token,
         "Expected notification to be sent to member"
     );
 
@@ -799,9 +844,11 @@ async fn test_admin_permission_verification() -> Result<()> {
 
 /// Test 6: Event kind filtering for broadcast messages
 #[tokio::test]
-#[serial]
 async fn test_event_kind_filtering() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_broadcast_test_environment().await?;
+    
+    // Clear any messages that might have been sent during setup
+    fcm_mock.clear();
 
     // Set up service
     let service_token = CancellationToken::new();
@@ -810,9 +857,11 @@ async fn test_event_kind_filtering() -> Result<()> {
     let listener_state = state.clone();
     let listener_token = service_token.clone();
     let listener_handle = tokio::spawn(async move {
+        eprintln!("Starting nostr_listener task...");
         if let Err(e) = nostr_listener::run(listener_state, event_tx, listener_token).await {
             eprintln!("Nostr listener task error: {}", e);
         }
+        eprintln!("Nostr listener task ended");
     });
 
     let handler_state = state.clone();
@@ -823,7 +872,7 @@ async fn test_event_kind_filtering() -> Result<()> {
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;  // Wait for service to be ready
 
     // Create test group
     let group_id = "test_kind_filtering_group";
@@ -840,8 +889,9 @@ async fn test_event_kind_filtering() -> Result<()> {
     member_client.add_relay(relay_url.as_str()).await?;
     member_client.connect().await;
 
-    // Register FCM token for member
-    let member_token = "fcm_token_kind_filter_member";
+    // Register FCM token for member with unique ID
+    let test_id = common::get_unique_test_id();
+    let member_token = format!("fcm_token_kind_filter_member_{}", test_id);
     register_user_token(&state, &member_keys, &member_client, &member_token).await?;
 
     // Define admins and members

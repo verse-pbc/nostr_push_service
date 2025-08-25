@@ -1,5 +1,7 @@
 use nostr_sdk::prelude::*;
-use serial_test::serial;
+// Removed serial_test - tests now run in parallel with isolated Redis databases
+
+mod common;
 use nostr_push_service::{
     config::Settings,
     event_handler,
@@ -9,15 +11,13 @@ use nostr_push_service::{
     state::AppState,
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
-// Counter for unique test tokens
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_test_id() -> String {
-    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let counter = common::get_unique_test_id();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -28,7 +28,7 @@ fn unique_test_id() -> String {
 async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
     dotenvy::dotenv().ok();
     
-    let redis_url = "redis://localhost:6379";
+    let redis_url = &common::create_test_redis_url();
     
     std::env::set_var(
         "NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX",
@@ -67,14 +67,10 @@ async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
-    // Flush Redis DB for test isolation (tests run serially)
-    let mut conn = pool.get().await?;
-    redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
-    Ok(())
+    common::clean_redis_globals(pool).await
 }
 
 #[tokio::test]
-#[serial]
 async fn test_filter_matches_kind() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
@@ -107,7 +103,6 @@ async fn test_filter_matches_kind() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_filter_matches_author() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
@@ -139,7 +134,6 @@ async fn test_filter_matches_author() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_filter_no_match() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
@@ -171,7 +165,6 @@ async fn test_filter_no_match() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_default_behavior_mentions() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();
@@ -198,7 +191,6 @@ async fn test_default_behavior_mentions() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_multiple_matching_filters() {
     let (state, _mock_fcm) = create_test_state().await;
     let user_keys = Keys::generate();

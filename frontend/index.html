@@ -612,6 +612,41 @@
             }
         }
 
+        // Helper function to ensure messaging is initialized
+        async function ensureMessagingInitialized() {
+            if (messaging) {
+                return true;
+            }
+            
+            if (!vapidPublicKey) {
+                log('Cannot initialize messaging: no VAPID key', 'error');
+                return false;
+            }
+            
+            if (firebase.apps.length === 0) {
+                log('Cannot initialize messaging: Firebase app not initialized', 'error');
+                return false;
+            }
+            
+            if (!('serviceWorker' in navigator)) {
+                log('Cannot initialize messaging: Service Worker not available', 'error');
+                return false;
+            }
+            
+            try {
+                // Wait for service worker to be ready
+                const registration = await navigator.serviceWorker.ready;
+                log(`Service Worker ready for messaging (scope: ${registration.scope})`, 'info');
+                
+                messaging = firebase.messaging();
+                log('Firebase Messaging initialized on demand', 'success');
+                return true;
+            } catch (e) {
+                log(`Failed to initialize messaging on demand: ${e.message}`, 'error');
+                return false;
+            }
+        }
+        
         async function initializeFirebase() {
             try {
                 const response = await fetch('/config/fcm.json', { cache: 'no-store' });
@@ -639,7 +674,17 @@
                     return false;
                 }
                 
-                firebase.initializeApp(config);
+                // Store the VAPID key early
+                vapidPublicKey = config.vapidPublicKey;
+                log(`VAPID key stored: ${vapidPublicKey ? vapidPublicKey.substring(0, 20) + '...' : 'NOT PROVIDED'}`, 'info');
+                
+                // Check if Firebase is already initialized
+                if (firebase.apps.length > 0) {
+                    log('Firebase already initialized, reusing existing app', 'info');
+                } else {
+                    firebase.initializeApp(config);
+                    log('Firebase app initialized', 'success');
+                }
                 
                 // Check if we're in a secure context (required for service workers and notifications)
                 if (!window.isSecureContext) {
@@ -659,49 +704,57 @@
                     return false;
                 }
                 
-                // Initialize Firebase Messaging if service worker is available
+                // Initialize Firebase Messaging - try multiple times on iOS PWA
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                const isPWA = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+                
                 if ('serviceWorker' in navigator) {
-                    try {
-                        messaging = firebase.messaging();
-                        log('Firebase Messaging initialized', 'success');
-                    } catch (e) {
-                        log(`Firebase Messaging init error: ${e.message}`, 'error');
+                    // For iOS PWA, we might need to wait for service worker
+                    if (isIOS && isPWA) {
+                        log('iOS PWA detected - ensuring service worker is ready...', 'info');
+                        
+                        // Wait for service worker to be ready
+                        try {
+                            const registration = await navigator.serviceWorker.ready;
+                            log(`Service Worker ready (scope: ${registration.scope})`, 'success');
+                        } catch (e) {
+                            log(`Service Worker ready wait failed: ${e.message}`, 'error');
+                        }
+                    }
+                    
+                    // Try to initialize messaging
+                    let retries = isIOS && isPWA ? 3 : 1;
+                    let initialized = false;
+                    
+                    for (let i = 0; i < retries; i++) {
+                        try {
+                            if (i > 0) {
+                                log(`Retrying Firebase Messaging init (attempt ${i + 1}/${retries})...`, 'info');
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                            }
+                            
+                            messaging = firebase.messaging();
+                            log('Firebase Messaging initialized successfully', 'success');
+                            initialized = true;
+                            break;
+                        } catch (e) {
+                            log(`Firebase Messaging init attempt ${i + 1} failed: ${e.message}`, 'error');
+                            if (e.message.includes('No handler for message type')) {
+                                log('Service worker might not be fully loaded yet', 'info');
+                            }
+                        }
+                    }
+                    
+                    if (!initialized) {
+                        log('Failed to initialize Firebase Messaging after retries', 'error');
                         messaging = null;
-                        return false;
+                        // Don't return false - VAPID key is still set
                     }
                 } else {
-                    // Service worker not available - might be a timing issue in PWA
-                    log('Service Worker API not immediately available', 'warning');
-                    
-                    // If we're in a PWA, wait a bit for it to become available
-                    if (window.navigator.standalone) {
-                        log('PWA detected, waiting for Service Worker...', 'info');
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        
-                        if ('serviceWorker' in navigator) {
-                            try {
-                                messaging = firebase.messaging();
-                                log('Firebase Messaging initialized after wait', 'success');
-                            } catch (e) {
-                                log(`Firebase Messaging error: ${e.message}`, 'error');
-                                messaging = null;
-                                return false;
-                            }
-                        } else {
-                            log('Service Worker still not available', 'error');
-                            log('This should not happen in HTTPS context', 'error');
-                            messaging = null;
-                            return false;
-                        }
-                    } else {
-                        log('Service Worker not available', 'error');
-                        messaging = null;
-                        return false;
-                    }
+                    log('Service Worker API not available', 'error');
+                    messaging = null;
+                    // Don't return false - VAPID key is still set
                 }
-                
-                vapidPublicKey = config.vapidPublicKey;
-                log(`VAPID key loaded from config: ${vapidPublicKey ? vapidPublicKey.substring(0, 20) + '...' : 'NOT PROVIDED'}`, 'info');
                 
                 // Handle foreground messages
                 messaging.onMessage(async (payload) => {
@@ -1090,12 +1143,45 @@
                     return;
                 }
                 
-                log('Requesting notification permission...', 'info');
-                const permission = await Notification.requestPermission();
+                // Check current permission status first
+                const currentPermission = Notification.permission;
+                log(`Current notification permission: ${currentPermission}`, 'info');
+                
+                if (currentPermission === 'denied') {
+                    log('❌ Notifications were previously denied', 'error');
+                    log('You need to:', 'info');
+                    log('1. Go to Settings > Notifications > [This App]', 'info');
+                    log('2. Enable notifications', 'info');
+                    log('3. Refresh this page', 'info');
+                    throw new Error('Notification permission previously denied');
+                }
+                
+                let permission = currentPermission;
+                if (permission !== 'granted') {
+                    log('Requesting notification permission...', 'info');
+                    
+                    // On iOS, requestPermission might not work immediately in PWA
+                    try {
+                        permission = await Notification.requestPermission();
+                        log(`Permission response: ${permission}`, 'info');
+                    } catch (e) {
+                        log(`Permission request error: ${e.message}`, 'error');
+                        
+                        // On iOS PWA, sometimes the permission is auto-granted
+                        if (isIOS && isStandalone) {
+                            // Check if permission was actually granted despite the error
+                            permission = Notification.permission;
+                            log(`Permission after error check: ${permission}`, 'info');
+                        }
+                    }
+                }
                 
                 if (permission !== 'granted') {
-                    throw new Error('Notification permission denied');
+                    log(`❌ Permission not granted: ${permission}`, 'error');
+                    throw new Error(`Notification permission: ${permission}`);
                 }
+                
+                log('✅ Notification permission granted', 'success');
                 
                 // Get existing registration or register new service worker
                 let registration = await navigator.serviceWorker.getRegistration('/');
@@ -1118,12 +1204,26 @@
                 log(`messaging object: ${typeof messaging} - ${messaging ? 'exists' : 'null/undefined'}`, 'info');
                 log(`vapidPublicKey: ${vapidPublicKey ? vapidPublicKey.substring(0, 20) + '...' : 'NULL/UNDEFINED'}`, 'info');
                 
+                // Ensure messaging is initialized before requesting token
+                if (!messaging) {
+                    log('Messaging not initialized, attempting to initialize now...', 'info');
+                    const messagingReady = await ensureMessagingInitialized();
+                    if (!messagingReady) {
+                        log('Failed to initialize messaging, cannot get FCM token', 'error');
+                        log('Try refreshing the page or reinstalling the PWA', 'info');
+                    }
+                }
+                
                 // Try to get FCM token with detailed error handling
                 if (messaging && vapidPublicKey) {
-                    log('Requesting FCM token from Firebase...', 'info');
+                    log('Preparing FCM token request...', 'info');
                     log(`VAPID key: ${vapidPublicKey.substring(0, 20)}...`, 'info');
+                    log(`Service Worker Registration: ${registration ? 'present' : 'missing'}`, 'info');
+                    log(`SW scope: ${registration?.scope}`, 'info');
+                    log(`SW state: ${registration?.active?.state}`, 'info');
                     
                     try {
+                        log('Calling messaging.getToken()...', 'info');
                         const token = await messaging.getToken({
                             vapidKey: vapidPublicKey,
                             serviceWorkerRegistration: registration
@@ -1161,10 +1261,33 @@
                             }
                         }
                     } catch (tokenError) {
-                        log(`FCM token error: ${tokenError.message}`, 'error');
+                        log(`❌ FCM token error: ${tokenError.message}`, 'error');
                         if (tokenError.code) {
                             log(`Error code: ${tokenError.code}`, 'error');
                         }
+                        
+                        // Detailed iOS debugging
+                        if (isIOS) {
+                            log('=== iOS FCM Token Debug ===', 'error');
+                            log(`iOS PWA mode: ${isStandalone ? 'YES' : 'NO'}`, 'info');
+                            log(`navigator.standalone: ${window.navigator.standalone}`, 'info');
+                            log(`Notification.permission: ${Notification.permission}`, 'info');
+                            log(`messaging initialized: ${messaging ? 'YES' : 'NO'}`, 'info');
+                            log(`Service worker state: ${registration?.active?.state}`, 'info');
+                            
+                            // Common iOS issues
+                            if (tokenError.message.includes('messaging/unsupported-browser')) {
+                                log('iOS browser doesn\'t support FCM', 'error');
+                                log('Make sure you\'re using Safari 16.4+ and running as PWA', 'info');
+                            } else if (tokenError.message.includes('messaging/failed-service-worker-registration')) {
+                                log('Service worker registration issue', 'error');
+                                log('Try refreshing the page', 'info');
+                            } else if (tokenError.message.includes('messaging/token-subscribe-failed')) {
+                                log('Failed to subscribe for push', 'error');
+                                log('Check that push notifications are enabled in iOS Settings', 'info');
+                            }
+                        }
+                        
                         throw tokenError;
                     }
                 } else {

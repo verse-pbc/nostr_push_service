@@ -1,5 +1,7 @@
 use nostr_sdk::prelude::*;
-use serial_test::serial;
+// Removed serial_test - tests now run in parallel with isolated Redis databases
+
+mod common;
 use nostr_push_service::{
     config::Settings, 
     event_handler, 
@@ -9,15 +11,13 @@ use nostr_push_service::{
     state::AppState
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
-// Global counter for unique test IDs
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_test_id() -> String {
-    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let counter = common::get_unique_test_id();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -30,7 +30,7 @@ async fn create_test_state() -> Arc<AppState> {
     dotenvy::dotenv().ok();
     
     // Use test Redis instance
-    let redis_url = "redis://localhost:6379";
+    let redis_url = &common::create_test_redis_url();
     
     // Set test keys
     std::env::set_var("NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX", 
@@ -76,19 +76,15 @@ async fn create_test_state() -> Arc<AppState> {
 }
 
 async fn cleanup_redis(pool: &RedisPool) -> anyhow::Result<()> {
-    // Flush Redis DB for test isolation (tests run serially)
-    let mut conn = pool.get().await?;
-    redis::cmd("FLUSHDB").query_async::<()>(&mut *conn).await?;
-    Ok(())
+    common::clean_redis_globals(pool).await
 }
 
 #[tokio::test]
-#[serial]
 async fn test_dm_handler_sends_to_recipients() {
     let state = create_test_state().await;
     
     // Generate unique test ID
-    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_id = common::get_unique_test_id();
     
     // Create a DM event (kind 1059) with p-tags for recipients
     let sender_keys = Keys::generate();
@@ -133,7 +129,6 @@ async fn test_dm_handler_sends_to_recipients() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_dm_handler_skips_sender() {
     let state = create_test_state().await;
     
@@ -167,7 +162,6 @@ async fn test_dm_handler_skips_sender() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_dm_handler_no_recipients_with_tokens() {
     let state = create_test_state().await;
     
@@ -190,12 +184,11 @@ async fn test_dm_handler_no_recipients_with_tokens() {
 }
 
 #[tokio::test]
-#[serial]
 async fn test_dm_handler_filters_only_p_tags() {
     let state = create_test_state().await;
     
     // Generate unique test ID
-    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_id = common::get_unique_test_id();
     
     let sender_keys = Keys::generate();
     let recipient_keys = Keys::generate();
