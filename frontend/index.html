@@ -387,6 +387,7 @@
                 <h2>✉️ Send Test</h2>
                 <textarea id="message" placeholder="Test message..."></textarea>
                 <button onclick="sendTestMessage()">Send to Relay (kind 9)</button>
+                <button onclick="sendDM()">Send DM (NIP-17)</button>
             </div>
         </div>
 
@@ -471,7 +472,7 @@
             }
             
             // Check for push notification support
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+            // isIOS already declared above
             const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
             
             if (!('Notification' in window)) {
@@ -860,7 +861,7 @@
                 }
                 
                 // Initialize Firebase Messaging - try multiple times on iOS PWA
-                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                // isIOS already declared at app init
                 const isPWA = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
                 
                 if ('serviceWorker' in navigator) {
@@ -1177,7 +1178,7 @@
                     return;
                 }
                 
-                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                // isIOS already declared at app init
                 const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
                 
                 // Debug: Log environment details
@@ -1624,31 +1625,108 @@
         }
 
         function subscribeToIncomingEvents() {
-            // Subscribe to kind 9 events to see if they arrive
+            // Subscribe to kind 9 and kind 1059 (DM) events to see if they arrive
             const sub = pool.subscribeMany([relayUrl], [
                 {
                     kinds: [9],
                     limit: 10
+                },
+                {
+                    kinds: [1059],  // Gift-wrapped DMs
+                    '#p': [publicKey],  // Where we're a recipient
+                    limit: 10
                 }
             ], {
                 onevent(event) {
-                const authorNpub = window.NostrTools.nip19.npubEncode(event.pubkey);
-                const isOwnEvent = event.pubkey === publicKey;
-                
-                log(`📨 Received kind 9 event (id: ${event.id.substring(0, 8)}...) from ${authorNpub.substring(0, 20)}...${isOwnEvent ? ' (your own)' : ''}`, 'info');
-                log(`Content: "${event.content.substring(0, 50)}"`, 'info');
-                
-                // Only check mentions if it's NOT our own event
-                if (!isOwnEvent) {
-                    const mentionedPubkeys = event.tags.filter(tag => tag[0] === 'p').map(tag => tag[1]);
-                    if (mentionedPubkeys.includes(publicKey)) {
-                        log(`🔔 You were mentioned in this event!`, 'success');
+                if (event.kind === 1059) {
+                    // Handle DM event
+                    const isRecipient = event.tags.some(tag => tag[0] === 'p' && tag[1] === publicKey);
+                    if (isRecipient) {
+                        log(`📥 Received encrypted DM (gift-wrapped)`, 'info');
+                        log(`Push notification should arrive soon...`, 'info');
+                    }
+                } else if (event.kind === 9) {
+                    // Handle chat event
+                    const authorNpub = window.NostrTools.nip19.npubEncode(event.pubkey);
+                    const isOwnEvent = event.pubkey === publicKey;
+                    
+                    log(`📨 Received kind 9 event (id: ${event.id.substring(0, 8)}...) from ${authorNpub.substring(0, 20)}...${isOwnEvent ? ' (your own)' : ''}`, 'info');
+                    log(`Content: "${event.content.substring(0, 50)}"`, 'info');
+                    
+                    // Only check mentions if it's NOT our own event
+                    if (!isOwnEvent) {
+                        const mentionedPubkeys = event.tags.filter(tag => tag[0] === 'p').map(tag => tag[1]);
+                        if (mentionedPubkeys.includes(publicKey)) {
+                            log(`🔔 You were mentioned in this event!`, 'success');
+                        }
                     }
                 }
                 }
             });
             
-            log('👂 Listening for incoming kind 9 (chat) events in real-time', 'info');
+            log('👂 Listening for incoming kind 9 (chat) and kind 1059 (DM) events in real-time', 'info');
+        }
+        
+        async function sendDM() {
+            try {
+                // Get recipient (default to self for testing)
+                const recipientNpub = prompt('Enter recipient npub (or leave empty to send to yourself):');
+                let recipientPubkey;
+                
+                if (recipientNpub) {
+                    try {
+                        const decoded = window.NostrTools.nip19.decode(recipientNpub);
+                        if (decoded.type !== 'npub') {
+                            throw new Error('Invalid npub format');
+                        }
+                        recipientPubkey = decoded.data;
+                    } catch (e) {
+                        log(`Invalid npub: ${e.message}`, 'error');
+                        return;
+                    }
+                } else {
+                    recipientPubkey = publicKey;
+                }
+                
+                const message = document.getElementById('message').value || 'Test DM';
+                
+                // Create the inner event (kind 14 for DM)
+                const innerEvent = {
+                    kind: 14,  // NIP-17 DM kind
+                    content: message,
+                    tags: [['p', recipientPubkey]],
+                    created_at: Math.floor(Date.now() / 1000)
+                };
+                
+                // Check if NIP-59 is available
+                if (!window.NostrTools.nip59) {
+                    log('NIP-59 not available, sending test DM', 'warning');
+                    // Fallback: send unencrypted test DM
+                    const testDM = finalizeEvent({
+                        kind: 1059,
+                        content: JSON.stringify({ test: true, message: message }),
+                        tags: [['p', recipientPubkey]],
+                        created_at: Math.floor(Date.now() / 1000)
+                    }, privateKey);
+                    await pool.publish([relayUrl], testDM);
+                } else {
+                    // Gift wrap it using NIP-59
+                    const wrappedEvent = await window.NostrTools.nip59.wrapEvent(
+                        innerEvent,
+                        privateKey,
+                        recipientPubkey
+                    );
+                    await pool.publish([relayUrl], wrappedEvent);
+                }
+                
+                const recipientNpubShort = window.NostrTools.nip19.npubEncode(recipientPubkey).substring(0, 20);
+                log(`📤 Sent encrypted DM to ${recipientNpubShort}...${recipientPubkey === publicKey ? ' (yourself)' : ''}`, 'success');
+                
+                // Clear message field
+                document.getElementById('message').value = '';
+            } catch (error) {
+                log(`Failed to send DM: ${error.message}`, 'error');
+            }
         }
         
         async function sendTestMessage() {

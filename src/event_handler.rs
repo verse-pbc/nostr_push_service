@@ -858,11 +858,15 @@ fn create_fcm_payload(event: &Event, target_pubkey: &PublicKey) -> Result<FcmPay
 
     let title = match event.kind {
         Kind::Custom(9) => format!("Chat from {} → {}", sender, receiver),
-        Kind::Custom(1059) => format!("DM from {} → {}", sender, receiver),
+        Kind::Custom(1059) => format!("Private message for {}", receiver),
         _ => format!("New message from {} → {}", sender, receiver),
     };
 
-    let body: String = event.content.chars().take(150).collect();
+    let body: String = if event.kind == Kind::Custom(1059) {
+        "You have a new encrypted message".to_string()
+    } else {
+        event.content.chars().take(150).collect()
+    };
 
     let mut data = std::collections::HashMap::new();
     data.insert("nostrEventId".to_string(), event.id.to_hex());
