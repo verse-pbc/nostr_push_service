@@ -424,6 +424,10 @@
         let vapidPublicKey = null;
         const relayUrl = 'wss://communities.nos.social';
         
+        // Platform detection
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || 
+                     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        
         // Nostr tools functions (will be initialized after library loads)
         let SimplePool, getPublicKey, generateSecretKey, finalizeEvent, getEventHash;
 
@@ -446,9 +450,7 @@
                 const APP_VERSION = '7.4-sw-cache-fix';
                 log(`Initializing... (Version: ${APP_VERSION})`, 'info');
             
-            // Detect platform and PWA mode
-            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || 
-                         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            // Detect PWA mode (isIOS already defined globally)
             const isPWA = window.matchMedia('(display-mode: standalone)').matches || 
                          window.navigator.standalone || 
                          document.referrer.includes('android-app://');
