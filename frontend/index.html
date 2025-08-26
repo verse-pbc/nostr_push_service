@@ -783,15 +783,38 @@
         
         // Copy logs to clipboard
         async function copyLogs() {
-            const logElement = document.getElementById('activityLog');
-            const logs = Array.from(logElement.children).map(child => child.textContent).join('\n');
+            const logElement = document.getElementById('logs');
+            if (!logElement) {
+                console.error('Log element not found');
+                return;
+            }
+            
+            // Get all log entries except the last one (which will be the "copied" message)
+            const allEntries = Array.from(logElement.children);
+            const logs = allEntries.map(child => child.textContent).join('\n');
             
             if (logs) {
                 try {
                     await navigator.clipboard.writeText(logs);
+                    // Add success message after copying
                     log('Logs copied to clipboard!', 'success');
                 } catch (err) {
-                    log('Failed to copy logs', 'error');
+                    console.error('Clipboard write failed:', err);
+                    // Fallback for iOS which might have clipboard restrictions
+                    try {
+                        // Create temporary textarea
+                        const textarea = document.createElement('textarea');
+                        textarea.value = logs;
+                        textarea.style.position = 'fixed';
+                        textarea.style.opacity = '0';
+                        document.body.appendChild(textarea);
+                        textarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textarea);
+                        log('Logs copied to clipboard!', 'success');
+                    } catch (fallbackErr) {
+                        log('Failed to copy logs', 'error');
+                    }
                 }
             }
         }
