@@ -91,7 +91,7 @@ pub async fn run(
                     }
                 }
 
-                debug!(event_id = %event_id, kind = %event_kind, "Dispatching event handler");
+                info!(event_id = %event_id, kind = %event_kind, "Dispatching event handler");
 
                 let handler_result = if event_kind == KIND_REGISTRATION {
                     handle_registration(&state, &event).await
@@ -102,6 +102,7 @@ pub async fn run(
                 } else if event_kind == KIND_SUBSCRIPTION_DELETE {
                     handle_subscription_delete(&state, &event, token.clone()).await
                 } else if event_kind == KIND_DM {
+                    info!(event_id = %event_id, "Processing DM event (kind 1059)");
                     handle_dm(&state, &event, token.clone()).await
                 } else if event.tags.find(TagKind::h()).is_some() {
                     // Handle events with 'h' tag (group-scoped events)
@@ -214,7 +215,7 @@ async fn handle_deregistration(state: &AppState, event: &Event) -> Result<()> {
 
 /// Handle DM events (kind 1059) by notifying all recipients in p-tags
 pub async fn handle_dm(state: &AppState, event: &Event, token: CancellationToken) -> Result<()> {
-    debug!(event_id = %event.id, "Handling DM event");
+    info!(event_id = %event.id, sender = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), "Handling DM event");
 
     if token.is_cancelled() {
         info!(event_id = %event.id, "Cancelled before handling DM.");
@@ -230,10 +231,15 @@ pub async fn handle_dm(state: &AppState, event: &Event, token: CancellationToken
         .filter_map(|content| PublicKey::from_str(content).ok())
         .collect();
 
-    debug!(event_id = %event.id, recipient_count = recipients.len(), "Found DM recipients");
+    let recipient_npubs: Vec<String> = recipients
+        .iter()
+        .map(|pk| pk.to_bech32().unwrap_or_else(|_| "invalid".to_string()))
+        .collect();
+    
+    info!(event_id = %event.id, recipient_count = recipients.len(), recipients = ?recipient_npubs, "Extracted DM recipients from p-tags");
 
     if recipients.is_empty() {
-        debug!(event_id = %event.id, "No recipients found in DM p-tags");
+        info!(event_id = %event.id, "No recipients found in DM p-tags - skipping notification");
         return Ok(());
     }
 
@@ -249,7 +255,7 @@ pub async fn handle_dm(state: &AppState, event: &Event, token: CancellationToken
             continue;
         }
 
-        trace!(event_id = %event.id, recipient = %recipient_pubkey, "Processing DM for recipient");
+        info!(event_id = %event.id, recipient = %recipient_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), "Processing DM for recipient");
 
         if let Err(e) =
             send_notification_to_user(state, event, &recipient_pubkey, token.clone()).await
@@ -261,7 +267,7 @@ pub async fn handle_dm(state: &AppState, event: &Event, token: CancellationToken
         }
     }
 
-    debug!(event_id = %event.id, "Finished handling DM");
+    info!(event_id = %event.id, "Finished handling DM");
     Ok(())
 }
 
@@ -565,17 +571,17 @@ async fn send_notification_to_user(
             res?
         }
     };
-    trace!(event_id = %event_id, target_pubkey = %target_pubkey, count = tokens.len(), "Found tokens");
-
     if tokens.is_empty() {
-        trace!(event_id = %event_id, target_pubkey = %target_pubkey, "No registered tokens found, skipping.");
+        info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), "No FCM tokens registered for recipient - skipping notification");
         return Ok(());
     }
+    
+    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), token_count = tokens.len(), "Found FCM tokens for recipient");
 
-    trace!(event_id = %event_id, target_pubkey = %target_pubkey, "Creating FCM payload");
+    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), "Creating FCM payload for DM notification");
     let payload = create_fcm_payload(event, target_pubkey)?;
 
-    trace!(event_id = %event_id, target_pubkey = %target_pubkey, token_count = tokens.len(), "Attempting to send FCM notification");
+    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), token_count = tokens.len(), "Attempting to send FCM notification");
 
     let results = tokio::select! {
         biased;
@@ -587,7 +593,7 @@ async fn send_notification_to_user(
             send_result
         }
     };
-    trace!(event_id = %event_id, target_pubkey = %target_pubkey, results_count = results.len(), "FCM send completed");
+    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), results_count = results.len(), "FCM send completed");
 
     trace!(event_id = %event_id, target_pubkey = %target_pubkey, "Handling FCM results");
     let mut tokens_to_remove = Vec::new();
@@ -617,7 +623,7 @@ async fn send_notification_to_user(
             }
         }
     }
-    debug!(event_id = %event_id, target_pubkey = %target_pubkey, success = success_count, removed = tokens_to_remove.len(), "FCM send summary");
+    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), success_count, failed_count = tokens_to_remove.len(), "FCM notification send summary");
 
     if !tokens_to_remove.is_empty() {
         debug!(event_id = %event_id, target_pubkey = %target_pubkey, count = tokens_to_remove.len(), "Removing invalid tokens globally");
