@@ -345,7 +345,7 @@
     <div class="container">
         <h1>🔔 Nostr Push Notification Dev Tool</h1>
         
-        <div class="info-bar">
+        <div class="info-bar" id="iosSetup" style="display: none;">
             <strong>iOS Setup:</strong> 
             Add to Home Screen from Safari → Open PWA → Register for push • HTTPS required • Push only works in PWA mode
         </div>
@@ -363,7 +363,7 @@
         <div class="grid">
             <div class="section">
                 <h2>🔑 Identity</h2>
-                <div class="pubkey" style="word-break: break-all;">npub: <span id="pubkey" style="font-size: 0.8em;">generating...</span></div>
+                <div class="pubkey" style="word-break: break-all; cursor: pointer;" onclick="copyNpub()" title="Click to copy">npub: <span id="pubkey" style="font-size: 0.8em;">generating...</span></div>
                 <div class="pubkey" style="word-break: break-all;">nsec: <span id="privkey" style="font-size: 0.8em;">generating...</span></div>
             </div>
             
@@ -433,7 +433,7 @@
                 if (window.NostrTools) {
                     return true;
                 }
-                log(`Waiting for NostrTools to load... (${i + 1}/${maxRetries})`, 'info');
+                // log(`Waiting for NostrTools to load... (${i + 1}/${maxRetries})`, 'info');
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
             return false;
@@ -443,17 +443,19 @@
         async function initializeApp() {
             try {
                 const APP_VERSION = '7.4-sw-cache-fix';
-                console.log(`[INIT] Initializing... (Version: ${APP_VERSION})`);
                 log(`Initializing... (Version: ${APP_VERSION})`, 'info');
-                console.log(`[INIT] Page loaded at: ${new Date().toISOString()}`);
-                log(`Page loaded at: ${new Date().toISOString()}`, 'info');
-                console.log(`[INIT] Cache-buster: ${window.location.search}`);
-                log(`Cache-buster: ${window.location.search}`, 'info');
             
-            // Detect if running as installed PWA
+            // Detect platform and PWA mode
+            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || 
+                         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
             const isPWA = window.matchMedia('(display-mode: standalone)').matches || 
                          window.navigator.standalone || 
                          document.referrer.includes('android-app://');
+            
+            // Show iOS setup instructions only for iOS users not in PWA mode
+            if (isIOS && !isPWA) {
+                document.getElementById('iosSetup').style.display = 'block';
+            }
             
             if (isPWA) {
                 log('Running as installed PWA', 'info');
@@ -487,7 +489,7 @@
             // Wait for NostrTools to load (important for PWA mode)
             const nostrLoaded = await waitForNostrTools();
             if (!nostrLoaded) {
-                log('Failed to load NostrTools after retries', 'error');
+                log('Failed to load Nostr tools', 'error');
                 document.getElementById('pubkey').textContent = 'Failed to load NostrTools';
                 document.getElementById('privkey').textContent = 'Try refreshing the page';
                 return;
@@ -496,8 +498,8 @@
             // Initialize nostr-tools functions
             if (window.NostrTools) {
                 const tools = window.NostrTools;
-                log('NostrTools loaded, available functions:', 'info');
-                log(Object.keys(tools).filter(k => typeof tools[k] === 'function').join(', '), 'info');
+                // log('NostrTools loaded, available functions:', 'info');
+                // log(Object.keys(tools).filter(k => typeof tools[k] === 'function').join(', '), 'info');
                 
                 SimplePool = tools.SimplePool;
                 getPublicKey = tools.getPublicKey;
@@ -511,8 +513,7 @@
                     finalizeEvent = tools.finalizeEvent;
                     log('Using tools.finalizeEvent for finalizeEvent', 'success');
                 } else {
-                    log('WARNING: Neither finishEvent nor finalizeEvent found in NostrTools!', 'error');
-                    log('Available: ' + Object.keys(tools).join(', '), 'error');
+                    log('WARNING: Event signing function not found!', 'error');
                 }
                 
                 getEventHash = tools.getEventHash;
@@ -520,7 +521,7 @@
                 
                 log(`Initialization check - finalizeEvent: ${typeof finalizeEvent}`, 'info');
             } else {
-                log('NostrTools not loaded!', 'error');
+                log('Nostr tools not loaded!', 'error');
                 return;
             }
             
@@ -692,22 +693,37 @@
         // Call initialization - handles both normal load and service worker cached pages
         if (document.readyState === 'complete') {
             // Page already loaded (likely from service worker cache)
-            console.log('[INIT] Page already loaded, initializing immediately');
             initializeApp();
         } else {
             // Wait for page to load
-            console.log('[INIT] Waiting for page load event');
             window.addEventListener('load', initializeApp);
+        }
+
+        // Copy npub to clipboard
+        async function copyNpub() {
+            const npubElement = document.getElementById('pubkey');
+            const npubText = npubElement.textContent;
+            
+            if (npubText && npubText !== 'generating...' && npubText !== 'Failed to load NostrTools') {
+                try {
+                    await navigator.clipboard.writeText('npub' + npubText);
+                    // Show brief feedback
+                    const originalText = npubElement.textContent;
+                    npubElement.textContent = 'Copied!';
+                    setTimeout(() => {
+                        npubElement.textContent = originalText;
+                    }, 1500);
+                } catch (err) {
+                    log('Failed to copy npub', 'error');
+                }
+            }
         }
 
         function generateKeys() {
             try {
-                // Debug: Check what's available
-                console.log('NostrTools:', window.NostrTools);
                 if (!window.NostrTools) {
                     throw new Error('NostrTools not loaded');
                 }
-                console.log('Available functions:', Object.keys(window.NostrTools).sort());
                 
                 // Check for existing key
                 const storedKey = localStorage.getItem('privateKey');
@@ -990,7 +1006,7 @@
                 await pool.ensureRelay(relayUrl);
                 
                 document.getElementById('relayStatus').textContent = relayUrl;
-                log(`Connected to relay: ${relayUrl}`, 'success');
+                log(`Connected to relay`, 'success');
             } catch (error) {
                 log(`Relay connection failed: ${error.message}`, 'error');
                 document.getElementById('relayStatus').textContent = 'error';
@@ -1030,7 +1046,7 @@
                         localStorage.setItem('fcmToken', currentFcmToken);
                         localStorage.setItem('fcmTokenOwner', publicKey);
                         document.getElementById('fcmToken').textContent = currentFcmToken.substring(0, 20) + '...';
-                        log('Found active registration from Nostr', 'info');
+                        // log('Found active registration from Nostr', 'info');
                     } else if (latestEvent.kind === 3080) {
                         // Latest event is a deregistration
                         currentFcmToken = null;
@@ -1039,7 +1055,7 @@
                         localStorage.removeItem('fcmToken');
                         localStorage.removeItem('fcmTokenOwner');
                         document.getElementById('fcmToken').textContent = '';
-                        log('Found deregistration from Nostr', 'info');
+                        // log('Found deregistration from Nostr', 'info');
                     }
                 } else {
                     // No registration events found - check localStorage as fallback
@@ -1057,7 +1073,7 @@
                     }
                 }
             } catch (error) {
-                log(`Failed to check registration status: ${error.message}`, 'error');
+                // log(`Failed to check registration status: ${error.message}`, 'error');
                 // Fall back to localStorage
                 const savedToken = localStorage.getItem('fcmToken');
                 const savedOwner = localStorage.getItem('fcmTokenOwner');
@@ -1096,13 +1112,13 @@
                         isSubscribed = true;
                         updateSubUI(true);
                         localStorage.setItem('isSubscribed', 'true');
-                        log('Found active subscription from Nostr', 'info');
+                        // log('Found active subscription from Nostr', 'info');
                     } else if (latestEvent.kind === 3082) {
                         // Latest event is an unsubscription
                         isSubscribed = false;
                         updateSubUI(false);
                         localStorage.removeItem('isSubscribed');
-                        log('Found unsubscription from Nostr', 'info');
+                        // log('Found unsubscription from Nostr', 'info');
                     }
                 } else {
                     // No subscription events found
@@ -1111,7 +1127,7 @@
                     localStorage.removeItem('isSubscribed');
                 }
             } catch (error) {
-                log(`Failed to check subscription status: ${error.message}`, 'error');
+                // log(`Failed to check subscription status: ${error.message}`, 'error');
                 // Fall back to localStorage
                 const subStatus = localStorage.getItem('isSubscribed');
                 if (subStatus === 'true') {
@@ -1757,11 +1773,11 @@
 
         async function checkSubscriptionStatus() {
             if (!publicKey || !pool) {
-                log('Cannot check subscription status - no key or pool', 'warning');
+                // log('Cannot check subscription status - no key or pool', 'warning');
                 return;
             }
             
-            log('Checking subscription status...', 'info');
+            // log('Checking subscription status...', 'info');
             
             try {
                 // Query for the user's subscription events (kinds 3081 and 3082)
@@ -1773,7 +1789,7 @@
                 });
                 
                 if (events.length === 0) {
-                    log('No subscription events found', 'info');
+                    // log('No subscription events found', 'info');
                     updateSubUI(false);
                     return;
                 }
@@ -1785,7 +1801,7 @@
                 // Kind 3081 = subscribe, Kind 3082 = unsubscribe
                 const isSubscribed = latestEvent.kind === 3081;
                 
-                log(`Latest subscription event: kind ${latestEvent.kind} at ${new Date(latestEvent.created_at * 1000).toLocaleString()}`, 'info');
+                // log(`Latest subscription event: kind ${latestEvent.kind} at ${new Date(latestEvent.created_at * 1000).toLocaleString()}`, 'info');
                 
                 if (isSubscribed) {
                     // Check what filters they're subscribed to
@@ -1798,7 +1814,7 @@
                 updateSubUI(isSubscribed);
                 
             } catch (error) {
-                log(`Error checking subscription status: ${error.message}`, 'error');
+                // log(`Error checking subscription status: ${error.message}`, 'error');
             }
         }
 
