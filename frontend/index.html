@@ -53,12 +53,28 @@
         
         .info-bar {
             background: #2a3f5f;
-            padding: 8px 10px;
+            padding: 20px;
             margin-bottom: 12px;
-            border-radius: 3px;
-            font-size: 12px;
-            color: #aaa;
-            line-height: 1.4;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #e1e1e1;
+            line-height: 1.6;
+            border-left: 4px solid #4fc3f7;
+        }
+        
+        .info-bar h2 {
+            margin-top: 0;
+            color: #4fc3f7;
+            font-size: 20px;
+        }
+        
+        .info-bar ol {
+            margin: 15px 0;
+            padding-left: 25px;
+        }
+        
+        .info-bar li {
+            margin: 10px 0;
         }
         
         .info-bar code {
@@ -343,11 +359,19 @@
 </head>
 <body>
     <div class="container">
-        <h1>🔔 Nostr Push Notification Dev Tool</h1>
+        <h1>🔔 Nostr Push Notifications Demo</h1>
         
         <div class="info-bar" id="iosSetup" style="display: none;">
-            <strong>iOS Setup:</strong> 
-            Add to Home Screen from Safari → Open PWA → Register for push • HTTPS required • Push only works in PWA mode
+            <h2>iOS Setup Required</h2>
+            <p>Push notifications on iOS require installing this app as a PWA:</p>
+            <ol>
+                <li>Open this page in Safari (not Chrome)</li>
+                <li>Tap the Share button</li>
+                <li>Select "Add to Home Screen"</li>
+                <li>Open the app from your home screen</li>
+                <li>Allow notifications when prompted</li>
+            </ol>
+            <p><strong>Note:</strong> Push notifications only work in PWA mode on iOS, not in the browser.</p>
         </div>
 
         <div class="quick-start">
@@ -363,14 +387,20 @@
         <div class="grid">
             <div class="section">
                 <h2>🔑 Identity</h2>
-                <div class="pubkey" style="word-break: break-all; cursor: pointer;" onclick="copyNpub()" title="Click to copy">npub: <span id="pubkey" style="font-size: 0.8em;">generating...</span></div>
-                <div class="pubkey" style="word-break: break-all;">nsec: <span id="privkey" style="font-size: 0.8em;">generating...</span></div>
+                <div class="pubkey" style="cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" onclick="copyNpub()" title="Click to copy npub">
+                    npub: <span id="pubkey" style="font-size: 0.9em;">generating...</span>
+                </div>
+                <div class="pubkey" style="cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" onclick="copyNsec()" title="Click to copy nsec">
+                    nsec: <span id="privkey" style="font-size: 0.9em;">generating...</span>
+                </div>
             </div>
             
             <div class="section">
                 <h2>📱 Push Notifications</h2>
-                <button id="register" onclick="registerForPush()" disabled>Register for Push (kind 3079)</button>
-                <button id="deregister" onclick="deregisterPush()" disabled>Deregister (kind 3080)</button>
+                <div style="display: flex; gap: 10px;">
+                    <button id="register" onclick="registerForPush()" disabled style="flex: 1;">Register</button>
+                    <button id="deregister" onclick="deregisterPush()" disabled style="flex: 1;">Deregister</button>
+                </div>
                 <span id="pushStatus" class="status-badge inactive">Not Registered</span>
             </div>
         </div>
@@ -378,21 +408,25 @@
         <div class="grid">
             <div class="section">
                 <h2>💬 Chat Subscriptions</h2>
-                <button id="subscribe" onclick="subscribeToChats()" disabled>Subscribe to Chats (kind 3081)</button>
-                <button id="unsubscribe" onclick="unsubscribeFromChats()" disabled>Unsubscribe (kind 3082)</button>
+                <div style="display: flex; gap: 10px;">
+                    <button id="subscribe" onclick="subscribeToChats()" disabled style="flex: 1;">Subscribe</button>
+                    <button id="unsubscribe" onclick="unsubscribeFromChats()" disabled style="flex: 1;">Unsubscribe</button>
+                </div>
                 <span id="subStatus" class="status-badge inactive">Not Subscribed</span>
             </div>
             
             <div class="section">
                 <h2>✉️ Send Test</h2>
                 <textarea id="message" placeholder="Test message..."></textarea>
-                <button onclick="sendTestMessage()">Send to Relay (kind 9)</button>
-                <button onclick="sendDM()">Send DM (NIP-17)</button>
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="sendTestMessage()" style="flex: 1;">Send Chat</button>
+                    <button onclick="sendDM()" style="flex: 1;">Send DM</button>
+                </div>
             </div>
         </div>
 
         <div class="section">
-            <h2>📋 Activity Log</h2>
+            <h2>📋 Activity Log <button onclick="copyLogs()" style="float: right; font-size: 12px; padding: 4px 8px;">Copy Logs</button></h2>
             <div class="logs" id="logs"></div>
         </div>
 
@@ -458,6 +492,11 @@
             // Show iOS setup instructions only for iOS users not in PWA mode
             if (isIOS && !isPWA) {
                 document.getElementById('iosSetup').style.display = 'block';
+                // Hide everything else for iOS non-PWA users
+                const containers = document.querySelectorAll('.container > :not(#iosSetup)');
+                containers.forEach(el => el.style.display = 'none');
+                document.querySelector('h1').textContent = '🔔 iOS Setup Required';
+                return; // Don't initialize the rest of the app
             }
             
             if (isPWA) {
@@ -709,7 +748,7 @@
             
             if (npubText && npubText !== 'generating...' && npubText !== 'Failed to load NostrTools') {
                 try {
-                    await navigator.clipboard.writeText('npub' + npubText);
+                    await navigator.clipboard.writeText(npubText);
                     // Show brief feedback
                     const originalText = npubElement.textContent;
                     npubElement.textContent = 'Copied!';
@@ -718,6 +757,41 @@
                     }, 1500);
                 } catch (err) {
                     log('Failed to copy npub', 'error');
+                }
+            }
+        }
+        
+        // Copy nsec to clipboard
+        async function copyNsec() {
+            const nsecElement = document.getElementById('privkey');
+            const nsecText = nsecElement.textContent;
+            
+            if (nsecText && nsecText !== 'generating...') {
+                try {
+                    await navigator.clipboard.writeText(nsecText);
+                    // Show brief feedback
+                    const originalText = nsecElement.textContent;
+                    nsecElement.textContent = 'Copied!';
+                    setTimeout(() => {
+                        nsecElement.textContent = originalText;
+                    }, 1500);
+                } catch (err) {
+                    log('Failed to copy nsec', 'error');
+                }
+            }
+        }
+        
+        // Copy logs to clipboard
+        async function copyLogs() {
+            const logElement = document.getElementById('activityLog');
+            const logs = Array.from(logElement.children).map(child => child.textContent).join('\n');
+            
+            if (logs) {
+                try {
+                    await navigator.clipboard.writeText(logs);
+                    log('Logs copied to clipboard!', 'success');
+                } catch (err) {
+                    log('Failed to copy logs', 'error');
                 }
             }
         }
@@ -1528,7 +1602,7 @@
                 isRegistered = true;
                 updatePushUI(true);
                 
-                log('Registered for push notifications', 'success');
+                log('✅ Push notifications enabled', 'success');
                 updateServiceWorkerCount();
             } catch (error) {
                 log(`Registration failed: ${error.message}`, 'error');
@@ -1575,7 +1649,7 @@
                 isRegistered = false;
                 updatePushUI(false);
                 
-                log('Deregistered from push notifications', 'success');
+                log('❌ Push notifications disabled', 'success');
             } catch (error) {
                 log(`Deregistration failed: ${error.message}`, 'error');
             }
@@ -1594,8 +1668,7 @@
                 
                 await pool.publish([relayUrl], event);
                 
-                log('📥 Subscribed to receive push notifications for ALL kind 9 (chat) events', 'success');
-                log('Filter: ' + JSON.stringify(filter), 'info');
+                log('📥 Subscribed to chats', 'success');
                 
                 // Check actual subscription status from relay
                 setTimeout(() => checkSubscriptionStatus(), 1000);
@@ -1617,7 +1690,7 @@
                 
                 await pool.publish([relayUrl], event);
                 
-                log('Unsubscribed from chats', 'success');
+                log('🚫 Unsubscribed from chats', 'success');
                 
                 // Check actual subscription status from relay
                 setTimeout(() => checkSubscriptionStatus(), 1000);
@@ -1644,16 +1717,14 @@
                     // Handle DM event
                     const isRecipient = event.tags.some(tag => tag[0] === 'p' && tag[1] === publicKey);
                     if (isRecipient) {
-                        log(`📥 Received encrypted DM (gift-wrapped)`, 'info');
-                        log(`Push notification should arrive soon...`, 'info');
+                        log(`📥 Received encrypted DM`, 'info');
                     }
                 } else if (event.kind === 9) {
                     // Handle chat event
                     const authorNpub = window.NostrTools.nip19.npubEncode(event.pubkey);
                     const isOwnEvent = event.pubkey === publicKey;
                     
-                    log(`📨 Received kind 9 event (id: ${event.id.substring(0, 8)}...) from ${authorNpub.substring(0, 20)}...${isOwnEvent ? ' (your own)' : ''}`, 'info');
-                    log(`Content: "${event.content.substring(0, 50)}"`, 'info');
+                    log(`📨 Chat from ${authorNpub.substring(0, 20)}...${isOwnEvent ? ' (you)' : ''}: "${event.content.substring(0, 50)}"`, 'info');
                     
                     // Only check mentions if it's NOT our own event
                     if (!isOwnEvent) {
@@ -1666,7 +1737,7 @@
                 }
             });
             
-            log('👂 Listening for incoming kind 9 (chat) and kind 1059 (DM) events in real-time', 'info');
+            log('👂 Listening for events...', 'info');
         }
         
         async function sendDM() {
@@ -1721,8 +1792,7 @@
                     await pool.publish([relayUrl], wrappedEvent);
                 }
                 
-                const recipientNpubShort = window.NostrTools.nip19.npubEncode(recipientPubkey).substring(0, 20);
-                log(`📤 Sent encrypted DM to ${recipientNpubShort}...${recipientPubkey === publicKey ? ' (yourself)' : ''}`, 'success');
+                log(`📤 Sent encrypted DM${recipientPubkey === publicKey ? ' to yourself' : ''}`, 'success');
                 
                 // Clear message field
                 document.getElementById('message').value = '';
@@ -1764,10 +1834,7 @@
                 await pool.publish([relayUrl], event);
                 
                 const npub = window.NostrTools.nip19.npubEncode(publicKey);
-                log(`📤 Sent kind 9 (chat) event`, 'success');
-                log(`Event ID: ${event.id.substring(0, 16)}...`, 'info');
-                log(`From: ${npub.substring(0, 30)}...`, 'info');
-                log(`Message: "${message.substring(0, 50)}"`, 'info');
+                log(`📤 Sent chat: "${message.substring(0, 50)}"`, 'success');
                 
                 // Show who was mentioned
                 const mentionedPubkeys = event.tags.filter(tag => tag[0] === 'p');
