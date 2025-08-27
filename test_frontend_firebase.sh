@@ -58,7 +58,7 @@ echo ""
 
 # Set environment variables and run the service
 export NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX=$SERVICE_PRIVATE_KEY
-export NOSTR_PUSH__FCM__PROJECT_ID="${FIREBASE_PROJECT_ID}"
+export GOOGLE_CLOUD_PROJECT="${FIREBASE_PROJECT_ID}"
 export NOSTR_PUSH__FCM__CREDENTIALS_BASE64="$CREDENTIALS_BASE64"
 export REDIS_URL="redis://localhost:6379"
 export RUST_LOG="trace"
