@@ -222,6 +222,13 @@ pub async fn handle_dm(state: &AppState, event: &Event, token: CancellationToken
         return Err(crate::error::ServiceError::Cancelled);
     }
 
+    // Log all tags for debugging
+    info!(event_id = %event.id, "DM event tags count: {}", event.tags.len());
+    for (i, tag) in event.tags.iter().enumerate() {
+        info!(event_id = %event.id, "Tag {}: kind={:?}, content={:?}", 
+            i, tag.kind(), tag.content());
+    }
+    
     // Extract all p-tags (recipients)
     let recipients: Vec<PublicKey> = event
         .tags
