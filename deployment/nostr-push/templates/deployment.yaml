@@ -38,8 +38,8 @@ spec:
                 secretKeyRef:
                   name: nostr-push-secret
                   key: redis-connection-string
-            - name: NOSTR_PUSH__FCM__PROJECT_ID
-              value: plur-623b0
+            - name: GOOGLE_CLOUD_PROJECT
+              value: plur-push-local
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: /app/secrets/serviceAccountKey.json
             # Firebase Web Configuration (from ConfigMap)
