@@ -14,7 +14,7 @@ Clients register encrypted push tokens with a push service and may post encrypte
 
 ## Motivation
 
-Avoid always-on connections (battery), deliver timely alerts, isolate multiple apps, and reduce {pubkey ↔ token} linkability via encryption.
+Avoid always-on connections (battery), deliver timely alerts, isolate multiple apps, and enable secure token management through encryption.
 
 ## Specification
 
@@ -26,23 +26,6 @@ Avoid always-on connections (battery), deliver timely alerts, isolate multiple a
 - `3082`: Notification filter delete
 
 All event content fields MUST contain NIP-44 ciphertext strings (no "nip44:" prefix). The decrypted payload structure is implementation-specific between client and service.
-
-### Service Discovery (kind 31990, parameterized replaceable)
-
-```json
-{
-  "kind": 31990,
-  "tags": [
-    ["d", "push-notification-service"],
-    ["push-pubkey", "<service-pubkey-hex>"],  // OPTIONAL; author pubkey is canonical
-    ["encryption", "nip44-required"]
-  ],
-  "content": "service info / terms"
-}
-```
-
-- Latest by author+d wins.
-- Services MAY use `["d", "push-notification-service:<app-id>"]` and add `["app", "<app-id>"]`.
 
 ### Registration (kind 3079)
 
@@ -143,15 +126,11 @@ Example minimal payload (implementation-specific):
 }
 ```
 
-Services define how filters are identified and deleted.
+Services define how filters are identified and deleted. This is implementation specific and can be normalized and hashed for internal implementations.
 
-## Notification Triggers (non-exhaustive; server policy)
+## Notification Triggers
 
-- DMs (NIP-17, e.g., kind 1059 to the user)
-- Mentions (`#p` includes user pubkey)
-- Replies (`#e` to user's events)
-- Custom filters (3081)
-- Group messages (NIP-29)
+Services MAY implement fixed notification triggers (e.g., DMs, mentions) and/or dynamic triggers based on user-defined filters from kind 3081 events.
 
 ## Implementation Requirements
 
@@ -163,7 +142,7 @@ Services define how filters are identified and deleted.
 4. **Multiple devices**: Support multiple tokens per (pubkey, app).
 5. **Idempotency**: At most one notification per (recipient_pubkey, app, event_id); aggregate reasons internally.
 6. **Error handling**: Remove invalid tokens on provider errors.
-7. **Privacy**: Don't expose tokens; redact in logs.
+7. **Token security**: Protect stored tokens; redact in logs.
 8. **Targeting**: If `p` present and not this service's pubkey, ignore.
 
 ### Client
@@ -180,10 +159,6 @@ Services define how filters are identified and deleted.
 - **Replay**: Expiration (NIP-40) bounds replays.
 - **Rotation**: Refresh/rotate tokens to limit exposure.
 - **Isolation**: `app` prevents cross-app misuse.
-
-## Privacy
-
-- Services learn timing/metadata; keep push payloads minimal.
 
 ## Examples
 
@@ -260,10 +235,6 @@ const ev = {
 };
 ```
 
-## Related NIPs
+### Service Discovery
 
-- [NIP-17](https://github.com/nostr-protocol/nips/blob/master/17.md): Private Direct Messages
-- [NIP-29](https://github.com/nostr-protocol/nips/blob/master/29.md): Relay-based Groups
-- [NIP-40](https://github.com/nostr-protocol/nips/blob/master/40.md): Expiration Timestamp
-- [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md): Authentication of clients to relays
-- [NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md): Encrypted Payloads
+Services can advertise their availability through various means. See [NIP-89](https://github.com/nostr-protocol/nips/blob/master/89.md) for application handler discovery patterns.
