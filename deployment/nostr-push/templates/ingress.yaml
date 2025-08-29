@@ -2,16 +2,16 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: plur-push-ingress
-  namespace: plur-push
+  name: nostr-push-ingress
+  namespace: nostr-push
   labels:
-    app.kubernetes.io/part-of: plur-push
+    app.kubernetes.io/part-of: nostr-push
     app.kubernetes.io/managed-by: Helm
 spec:
   tls:
     - hosts:
       - {{ .Values.ingress.host }}
-      secretName: plur-push-certificate
+      secretName: nostr-push-certificate
   rules:
     - host: {{ .Values.ingress.host }}
       http:
@@ -20,7 +20,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: plur-push-service
+                name: nostr-push-service
                 port:
                   number: 80
   ingressClassName: {{ .Values.ingress.className }}

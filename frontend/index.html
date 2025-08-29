@@ -1,0 +1,2298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Nostr Push Dev Tool</title>
+    
+    <!-- PWA manifest and iOS support -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Nostr Push">
+    <link rel="apple-touch-icon" href="/icon-192x192.png">
+    
+    <!-- Prevent duplicate installations -->
+    <meta name="application-name" content="Nostr Push">
+    <meta name="msapplication-starturl" content="/?source=pwa">
+    <link rel="canonical" href="https://nostrpush.verse.app/">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Display', Roboto, 'Helvetica Neue', sans-serif;
+            background: linear-gradient(135deg, #1e1e1e 0%, #2a2a2a 100%);
+            color: #e0e0e0;
+            padding: 10px;
+            font-size: 13px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            background: rgba(26, 26, 26, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 16px;
+            max-width: 800px;
+            margin: 0 auto;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            color: #fff;
+            font-size: 20px;
+            margin-bottom: 12px;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+        
+        .info-bar {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
+            padding: 20px;
+            margin-bottom: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #e1e1e1;
+            line-height: 1.6;
+            border-left: 4px solid #667eea;
+            backdrop-filter: blur(5px);
+        }
+        
+        .info-bar h2 {
+            margin-top: 0;
+            color: #667eea;
+            font-size: 20px;
+            font-weight: 600;
+        }
+        
+        .info-bar ol {
+            margin: 15px 0;
+            padding-left: 25px;
+        }
+        
+        .info-bar li {
+            margin: 10px 0;
+        }
+        
+        .info-bar code {
+            color: #764ba2;
+            background: rgba(118, 75, 162, 0.2);
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        
+        .section {
+            background: rgba(34, 34, 34, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 12px;
+            border-radius: 6px;
+            backdrop-filter: blur(5px);
+        }
+        
+        .section h2 {
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #667eea;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 6px;
+            margin-bottom: 8px;
+            font-family: inherit;
+            min-height: 36px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
+        }
+        
+        button:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            background: #2a2a2a;
+            color: #555;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        
+        button.secondary {
+            background: transparent;
+            border: 1px solid #667eea;
+            color: #667eea;
+            box-shadow: none;
+        }
+        
+        button.secondary:hover:not(:disabled) {
+            background: rgba(102, 126, 234, 0.1);
+            border-color: #764ba2;
+            color: #764ba2;
+        }
+        
+        button.danger {
+            background: linear-gradient(135deg, #f44336 0%, #e91e63 100%);
+            color: white;
+        }
+        
+        button.danger:hover {
+            box-shadow: 0 4px 12px rgba(244, 67, 54, 0.4);
+        }
+        
+        button.icon-btn {
+            background: transparent;
+            border: 1px solid #444;
+            color: #888;
+            padding: 6px 10px;
+            font-size: 11px;
+            min-height: 28px;
+            box-shadow: none;
+        }
+        
+        button.icon-btn:hover:not(:disabled) {
+            border-color: #667eea;
+            color: #667eea;
+            background: rgba(102, 126, 234, 0.05);
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            margin-left: 6px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        
+        .status-badge.active {
+            background: #4caf50;
+            color: white;
+        }
+        
+        .status-badge.inactive {
+            background: #666;
+            color: #ccc;
+        }
+        
+        .status-badge.warning {
+            background: #ff9800;
+            color: white;
+        }
+        
+        .status-badge.error {
+            background: #f44336;
+            color: white;
+        }
+        
+        textarea {
+            width: 100%;
+            padding: 10px;
+            background: rgba(51, 51, 51, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #e0e0e0;
+            border-radius: 6px;
+            font-size: 12px;
+            font-family: 'SF Mono', Monaco, monospace;
+            resize: vertical;
+            min-height: 50px;
+            transition: border-color 0.3s ease;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background: rgba(51, 51, 51, 0.8);
+        }
+        
+        .logs {
+            background: #0a0a0a;
+            color: #00ff41;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 11px;
+            height: 150px;
+            overflow-y: auto;
+            border: 1px solid rgba(0, 255, 65, 0.2);
+            -webkit-overflow-scrolling: touch;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .log-entry {
+            margin-bottom: 3px;
+            line-height: 1.3;
+        }
+        
+        .log-entry.error {
+            color: #f44336;
+        }
+        
+        .log-entry.warning {
+            color: #ff9800;
+        }
+        
+        .log-entry.info {
+            color: #03a9f4;
+        }
+        
+        .log-entry.success {
+            color: #4caf50;
+        }
+        
+        .pubkey {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 11px;
+            color: #999;
+            word-break: break-all;
+            margin: 6px 0;
+            line-height: 1.4;
+            min-width: 0;  /* Prevent grid blowout */
+            padding: 6px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .debug-info {
+            background: rgba(26, 26, 26, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 10px;
+            margin-top: 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-family: 'SF Mono', Monaco, monospace;
+            color: #888;
+        }
+        
+        .debug-info div {
+            margin: 4px 0;
+            line-height: 1.4;
+        }
+        
+        .quick-start {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            border-left: 3px solid #667eea;
+            padding: 10px;
+            margin-bottom: 12px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        
+        .quick-start ol {
+            margin: 6px 0 0 24px;
+            padding: 0;
+        }
+        
+        /* Mobile responsive styles */
+        @media (max-width: 600px) {
+            body {
+                padding: 8px;
+                font-size: 14px;
+            }
+            
+            .container {
+                padding: 10px;
+            }
+            
+            h1 {
+                font-size: 20px;
+                margin-bottom: 12px;
+            }
+            
+            .info-bar {
+                font-size: 13px;
+                padding: 10px;
+            }
+            
+            .grid {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 10px;
+            }
+            
+            .section {
+                padding: 12px;
+            }
+            
+            .section h2 {
+                font-size: 15px;
+                margin-bottom: 10px;
+            }
+            
+            button {
+                padding: 10px 16px;
+                font-size: 13px;
+                min-height: 44px;
+                width: 100%;
+                margin-right: 0;
+                margin-bottom: 10px;
+            }
+            
+            .status-badge {
+                display: block;
+                margin: 10px 0;
+                text-align: center;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            
+            textarea {
+                font-size: 13px;
+                padding: 10px;
+                min-height: 60px;
+            }
+            
+            .logs {
+                height: 200px;
+                font-size: 12px;
+                padding: 12px;
+            }
+            
+            .log-entry {
+                margin-bottom: 4px;
+                line-height: 1.4;
+            }
+            
+            .pubkey {
+                font-size: 12px;
+                margin: 8px 0;
+            }
+            
+            .debug-info {
+                padding: 12px;
+                font-size: 12px;
+            }
+            
+            .debug-info div {
+                margin: 6px 0;
+            }
+            
+            .quick-start {
+                font-size: 13px;
+                padding: 12px;
+            }
+            
+            .quick-start ol {
+                margin-left: 20px;
+            }
+        }
+        
+        /* Ensure touch targets are at least 44x44 pixels */
+        @media (pointer: coarse) {
+            button {
+                min-height: 44px;
+                min-width: 44px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔔 Nostr Push Notifications Demo</h1>
+        
+        <div class="info-bar">
+            <strong>ℹ️ How it works:</strong> Register encrypted push tokens with the service. Get notifications for DMs, mentions, and custom filters. 
+            <a href="docs/nip-xx-push-notifications.md" style="color: #667eea;">See NIP draft</a>
+        </div>
+        
+        <div class="info-bar" id="iosSetup" style="display: none;">
+            <h2>iOS Setup Required</h2>
+            <p>Push notifications on iOS require installing this app as a PWA:</p>
+            <ol>
+                <li>Open this page in Safari (not Chrome)</li>
+                <li>Tap the Share button</li>
+                <li>Select "Add to Home Screen"</li>
+                <li>Open the app from your home screen</li>
+                <li>Allow notifications when prompted</li>
+            </ol>
+            <p><strong>Note:</strong> Push notifications only work in PWA mode on iOS, not in the browser.</p>
+        </div>
+
+        <div class="quick-start">
+            <strong>Quick Test:</strong>
+            <ol>
+                <li>Register for Push Notifications (3079)</li>
+                <li>Subscribe to kind 9 - optional, DMs work by default (3081)</li>
+                <li>Open another browser and Send to Relay</li>
+                <li>You should receive a push notification!</li>
+            </ol>
+        </div>
+
+        <div class="grid">
+            <div class="section">
+                <h2>🔑 Identity</h2>
+                <div class="pubkey" style="cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" onclick="copyNpub()" title="Click to copy npub">
+                    npub: <span id="pubkey" style="font-size: 0.9em;">generating...</span>
+                </div>
+                <div class="pubkey" style="cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" onclick="copyNsec()" title="Click to copy nsec">
+                    nsec: <span id="privkey" style="font-size: 0.9em;">generating...</span>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>📱 Push Notifications</h2>
+                <div style="display: flex; gap: 8px;">
+                    <button id="register" onclick="registerForPush()" disabled style="flex: 1;">Register (3079)</button>
+                    <button id="deregister" onclick="deregisterPush()" disabled style="flex: 1;" class="secondary">Deregister (3080)</button>
+                </div>
+                <span id="pushStatus" class="status-badge inactive">Not Registered</span>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="section">
+                <h2>💬 Kind 9 Subscriptions</h2>
+                <div style="display: flex; gap: 8px;">
+                    <button id="subscribe" onclick="subscribeToChats()" disabled style="flex: 1;">Subscribe (3081)</button>
+                    <button id="unsubscribe" onclick="unsubscribeFromChats()" disabled style="flex: 1;" class="secondary">Unsubscribe (3082)</button>
+                </div>
+                <span id="subStatus" class="status-badge inactive">Not Subscribed</span>
+            </div>
+            
+            <div class="section">
+                <h2>✉️ Send Test</h2>
+                <textarea id="message" placeholder="Test message..."></textarea>
+                <div style="display: flex; gap: 8px;">
+                    <button onclick="sendTestMessage()" style="flex: 1;">Send kind 9</button>
+                    <button onclick="sendDM()" style="flex: 1;">Send DM</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2><span>📋 Activity Log</span> <button onclick="copyLogs()" class="icon-btn">Copy</button></h2>
+            <div class="logs" id="logs"></div>
+        </div>
+
+        <div class="debug-info">
+            <div><strong>Service Workers:</strong> <span id="swCount">0</span> active</div>
+            <div><strong>FCM Token:</strong> <span id="fcmToken">none</span></div>
+            <div><strong>Relay:</strong> <span id="relayStatus">disconnected</span></div>
+            <button class="danger" onclick="clearAllData()">Clear All Data & Service Workers</button>
+        </div>
+    </div>
+
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
+    
+    <!-- Nostr Tools -->
+    <!-- Using CDN version for demo -->
+    <script src="https://unpkg.com/nostr-tools@2.10.1/lib/nostr.bundle.js"></script>
+
+    <script>
+        // Global variables
+        let pool = null;
+        let privateKey = null;
+        let publicKey = null;
+        let messaging = null;
+        let currentFcmToken = null;
+        let isRegistered = false;
+        let isSubscribed = false;
+        let vapidPublicKey = null;
+        const relayUrl = 'wss://communities.nos.social';
+        
+        // Service configuration for NIP-44 encryption
+        // This will be injected by the backend
+        const SERVICE_NPUB = 'npub1mutnyacc9uc4t5mmxvpprwsauj5p2qxq95v4a9j0jxl8wnkfvuyqpq9mhx';
+        const APP_NAME = 'nostrpushdemo'; // App identifier for namespace isolation
+        let servicePubkey = null; // Will be decoded from SERVICE_NPUB
+        
+        // Platform detection
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || 
+                     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        
+        // Nostr tools functions (will be initialized after library loads)
+        let SimplePool, getPublicKey, generateSecretKey, finalizeEvent, getEventHash;
+
+        // Auto-initialize on load
+        // Function to wait for NostrTools to load
+        async function waitForNostrTools(maxRetries = 10) {
+            for (let i = 0; i < maxRetries; i++) {
+                if (window.NostrTools) {
+                    return true;
+                }
+                // log(`Waiting for NostrTools to load... (${i + 1}/${maxRetries})`, 'info');
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            return false;
+        }
+
+        // Function to initialize the app
+        async function initializeApp() {
+            try {
+                const APP_VERSION = '7.4-sw-cache-fix';
+                log(`Initializing... (Version: ${APP_VERSION})`, 'info');
+            
+            // Detect PWA mode (isIOS already defined globally)
+            const isPWA = window.matchMedia('(display-mode: standalone)').matches || 
+                         window.navigator.standalone || 
+                         document.referrer.includes('android-app://');
+            
+            // Show iOS setup instructions only for iOS users not in PWA mode
+            if (isIOS && !isPWA) {
+                document.getElementById('iosSetup').style.display = 'block';
+                // Hide everything else for iOS non-PWA users
+                const containers = document.querySelectorAll('.container > :not(#iosSetup)');
+                containers.forEach(el => el.style.display = 'none');
+                document.querySelector('h1').textContent = '🔔 iOS Setup Required';
+                return; // Don't initialize the rest of the app
+            }
+            
+            if (isPWA) {
+                log('Running as installed PWA', 'info');
+                // Add visual indicator that app is installed
+                document.body.classList.add('pwa-installed');
+            } else {
+                // Check if PWA is installable
+                window.addEventListener('beforeinstallprompt', (e) => {
+                    e.preventDefault();
+                    log('PWA is installable', 'info');
+                    // Could show custom install button here
+                });
+            }
+            
+            // Check for push notification support
+            // isIOS already declared above
+            const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+            
+            if (!('Notification' in window)) {
+                log('⚠️ Push notifications not supported', 'warning');
+                document.getElementById('register').disabled = true;
+                document.getElementById('pushStatus').textContent = 'Not Supported';
+                document.getElementById('pushStatus').className = 'status-badge error';
+            } else if (isIOS && !isStandalone) {
+                log('📱 iOS Safari: Add to Home Screen for push notifications', 'info');
+                log('Tap Share → Add to Home Screen, then open from home screen', 'info');
+                document.getElementById('pushStatus').textContent = 'Add to Home Screen';
+                document.getElementById('pushStatus').className = 'status-badge warning';
+            }
+            
+            // Wait for NostrTools to load (important for PWA mode)
+            const nostrLoaded = await waitForNostrTools();
+            if (!nostrLoaded) {
+                log('Failed to load Nostr tools', 'error');
+                document.getElementById('pubkey').textContent = 'Failed to load NostrTools';
+                document.getElementById('privkey').textContent = 'Try refreshing the page';
+                return;
+            }
+            
+            // Initialize nostr-tools functions
+            if (window.NostrTools) {
+                const tools = window.NostrTools;
+                // log('NostrTools loaded, available functions:', 'info');
+                // log(Object.keys(tools).filter(k => typeof tools[k] === 'function').join(', '), 'info');
+                
+                SimplePool = tools.SimplePool;
+                getPublicKey = tools.getPublicKey;
+                generateSecretKey = tools.generateSecretKey;
+                
+                // Debug the finishEvent assignment
+                if (tools.finishEvent) {
+                    finalizeEvent = tools.finishEvent;
+                    log('Using tools.finishEvent for finalizeEvent', 'success');
+                } else if (tools.finalizeEvent) {
+                    finalizeEvent = tools.finalizeEvent;
+                    log('Using tools.finalizeEvent for finalizeEvent', 'success');
+                } else {
+                    log('WARNING: Event signing function not found!', 'error');
+                }
+                
+                getEventHash = tools.getEventHash;
+                pool = new SimplePool();
+                
+                // Decode service pubkey from npub
+                if (SERVICE_NPUB && SERVICE_NPUB !== '') {
+                    try {
+                        const decoded = tools.nip19.decode(SERVICE_NPUB);
+                        if (decoded.type === 'npub') {
+                            servicePubkey = decoded.data;
+                            log(`Service pubkey configured: ${SERVICE_NPUB.substring(0, 30)}...`, 'info');
+                        }
+                    } catch (e) {
+                        log('Failed to decode service npub', 'error');
+                    }
+                } else {
+                    log('Warning: No service pubkey configured', 'warning');
+                }
+                
+                log(`Initialization check - finalizeEvent: ${typeof finalizeEvent}`, 'info');
+            } else {
+                log('Nostr tools not loaded!', 'error');
+                return;
+            }
+            
+            // Generate or restore keys
+            generateKeys();
+            
+            // Initialize Firebase
+            log('Starting Firebase initialization...', 'info');
+            const firebaseResult = await initializeFirebase();
+            log(`Firebase initialization complete, result: ${firebaseResult}`, 'info');
+            
+            // Comprehensive SW registration with iOS PWA debugging
+            try {
+                log('About to check for ServiceWorker API...', 'info');
+                const hasServiceWorker = 'serviceWorker' in navigator;
+                log(`ServiceWorker in navigator: ${hasServiceWorker}`, 'info');
+                
+                if (!hasServiceWorker) {
+                log('❌ ServiceWorker API not available in navigator!', 'error');
+                log(`User Agent: ${navigator.userAgent}`, 'error');
+            } else {
+                log('✅ ServiceWorker API is available', 'info');
+                try {
+                    log('Starting SW registration process...', 'info');
+                    log(`navigator.serviceWorker supported: ${!!navigator.serviceWorker}`, 'info');
+                    log(`Current page URL: ${window.location.href}`, 'info');
+                    log(`Current page protocol: ${window.location.protocol}`, 'info');
+                    log(`Is secure context: ${window.isSecureContext}`, 'info');
+                    
+                    // Special handling for iOS PWA
+                    if (isIOS && isStandalone) {
+                        log('iOS PWA detected - adding delay before SW registration...', 'info');
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        log('Delay complete, proceeding with registration', 'info');
+                    }
+                    
+                    // First verify the files exist
+                    for (const url of ['/firebase-messaging-sw.js', '/firebase-config.js']) {
+                        try {
+                            const r = await fetch(url, { cache: 'no-store' });
+                            log(`Fetch ${url}: ${r.status} ${r.ok ? 'OK' : 'FAIL'}`, r.ok ? 'info' : 'error');
+                            if (!r.ok) {
+                                const text = await r.text();
+                                log(`Response for ${url}: ${text.substring(0, 200)}`, 'error');
+                            }
+                            if (!r.ok) {
+                                log(`Critical: ${url} returned ${r.status} - SW registration will fail`, 'error');
+                            }
+                        } catch (e) {
+                            log(`Fetch ${url} failed: ${e.message}`, 'error');
+                        }
+                    }
+                    
+                    // Check current registration state
+                    let registration = await navigator.serviceWorker.getRegistration('/');
+                    log(`Existing registration: ${registration ? 'YES' : 'NO'}`, 'info');
+                    
+                    if (!registration) {
+                        log('No existing SW, registering /firebase-messaging-sw.js with scope /...', 'info');
+                        
+                        // Add state change listeners before registration
+                        navigator.serviceWorker.addEventListener('statechange', (e) => {
+                            log(`SW state changed: ${e.target.state}`, 'info');
+                        });
+                        
+                        navigator.serviceWorker.addEventListener('controllerchange', () => {
+                            log('Controller changed - SW now controlling page', 'success');
+                        });
+                        
+                        try {
+                            registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+                            log(`SW registered successfully, scope: ${registration.scope}`, 'success');
+                        } catch (regError) {
+                            log(`SW registration failed: ${regError.message}`, 'error');
+                            log(`Error details: ${JSON.stringify({name: regError.name, message: regError.message})}`, 'error');
+                            throw regError;
+                        }
+                        
+                        // Track installation/activation
+                        if (registration.installing) {
+                            log('SW is installing...', 'info');
+                            registration.installing.addEventListener('statechange', function() {
+                                log(`Installing SW state: ${this.state}`, 'info');
+                            });
+                        }
+                        
+                        if (registration.waiting) {
+                            log('SW is waiting to activate...', 'info');
+                        }
+                        
+                        if (registration.active) {
+                            log('SW is already active', 'info');
+                        }
+                        
+                        // Wait for activation
+                        log('Waiting for SW to be ready...', 'info');
+                        await navigator.serviceWorker.ready;
+                        log('SW is ready', 'success');
+                        
+                        // Check controller
+                        if (!navigator.serviceWorker.controller) {
+                            log('SW not controlling page yet, waiting for controllerchange...', 'info');
+                            await new Promise(res => navigator.serviceWorker.addEventListener('controllerchange', res, { once: true }));
+                        }
+                        log(`SW active + controlling (scope: ${registration.scope})`, 'success');
+                    } else {
+                        log(`SW already registered (scope: ${registration.scope})`, 'info');
+                        log(`SW active: ${registration.active ? 'YES' : 'NO'}`, 'info');
+                        log(`SW installing: ${registration.installing ? 'YES' : 'NO'}`, 'info');
+                        log(`SW waiting: ${registration.waiting ? 'YES' : 'NO'}`, 'info');
+                        log(`Page controlled: ${navigator.serviceWorker.controller ? 'YES' : 'NO'}`, 'info');
+                        
+                        // Try to update
+                        registration.update().then(() => {
+                            log('SW update check completed', 'info');
+                        }).catch(err => {
+                            log(`SW update check failed: ${err.message}`, 'warning');
+                        });
+                    }
+                    
+                    // Final verification
+                    const finalReg = await navigator.serviceWorker.getRegistration('/');
+                    if (finalReg && finalReg.active) {
+                        log('✅ SW registration verified - ready for push', 'success');
+                        updateServiceWorkerCount();
+                    } else {
+                        log('⚠️ SW registration incomplete', 'error');
+                    }
+                    
+                } catch (err) {
+                    log(`SW registration error: ${err.message}`, 'error');
+                    log(`Full error: ${err.stack}`, 'error');
+                }
+            }
+            } catch (swInitError) {
+                log(`Critical error during SW initialization: ${swInitError.message}`, 'error');
+                log(`Error stack: ${swInitError.stack}`, 'error');
+            }
+            
+            // Connect to relay
+            await connectToRelay();
+            
+            // Check registration status
+            checkRegistrationStatus();
+            
+            // Check subscription status (for buttons state)
+            await checkSubscriptionStatus();
+            
+            // Subscribe to incoming events for debugging
+            subscribeToIncomingEvents();
+            
+            // Count service workers
+            updateServiceWorkerCount();
+            
+            // Enable register button now that everything is initialized
+            if (finalizeEvent && privateKey && publicKey && pool) {
+                document.getElementById('register').disabled = false;
+                log('Initialization complete - Register button enabled', 'success');
+            } else {
+                log('Initialization incomplete - some components failed to load', 'warning');
+            }
+            } catch (initError) {
+                log(`CRITICAL ERROR during initialization: ${initError.message}`, 'error');
+                log(`Error stack: ${initError.stack}`, 'error');
+                log(`Error occurred at: ${new Date().toISOString()}`, 'error');
+            }
+        }
+        
+        // Call initialization - handles both normal load and service worker cached pages
+        if (document.readyState === 'complete') {
+            // Page already loaded (likely from service worker cache)
+            initializeApp();
+        } else {
+            // Wait for page to load
+            window.addEventListener('load', initializeApp);
+        }
+
+        // NIP-44 encryption helper
+        // Generic NIP-44 encryption function for service communication
+        async function encryptForService(content) {
+            if (!servicePubkey) {
+                throw new Error('Service pubkey not configured');
+            }
+            
+            if (!window.NostrTools?.nip44) {
+                throw new Error('NIP-44 not available in nostr-tools');
+            }
+            
+            // Convert hex private key to bytes if needed
+            let privateKeyBytes;
+            if (typeof privateKey === 'string' && privateKey.length === 64) {
+                // Convert hex string to Uint8Array
+                privateKeyBytes = new Uint8Array(32);
+                for (let i = 0; i < 64; i += 2) {
+                    privateKeyBytes[i / 2] = parseInt(privateKey.substr(i, 2), 16);
+                }
+            } else if (privateKey instanceof Uint8Array) {
+                privateKeyBytes = privateKey;
+            } else {
+                throw new Error('Invalid private key format');
+            }
+            
+            // Service pubkey should be a hex string for getConversationKey
+            // (nip19.decode returns it as hex string)
+            if (typeof servicePubkey !== 'string' || servicePubkey.length !== 64) {
+                throw new Error('Service pubkey must be a 64-character hex string');
+            }
+            
+            // Get conversation key for NIP-44
+            // Note: getConversationKey expects privateKey as Uint8Array and pubkey as hex string
+            const conversationKey = window.NostrTools.nip44.getConversationKey(
+                privateKeyBytes,
+                servicePubkey
+            );
+            
+            // Encrypt using NIP-44 with conversation key
+            const encrypted = window.NostrTools.nip44.encrypt(
+                content,
+                conversationKey
+            );
+            
+            return encrypted;
+        }
+        
+        // Wrapper for FCM token encryption (wraps in { token: ... })
+        async function encryptTokenForService(token) {
+            const payload = JSON.stringify({ token: token });
+            return encryptForService(payload);
+        }
+        
+        // Wrapper for filter encryption (direct JSON stringification)
+        async function encryptFilterForService(filterObject) {
+            const payload = JSON.stringify(filterObject);
+            return encryptForService(payload);
+        }
+        
+        // Calculate expiration timestamp (7 days from now)
+        function getExpirationTimestamp() {
+            return Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60);
+        }
+        
+        // Copy npub to clipboard
+        async function copyNpub() {
+            const npubElement = document.getElementById('pubkey');
+            const npubText = npubElement.textContent;
+            
+            if (npubText && npubText !== 'generating...' && npubText !== 'Failed to load NostrTools') {
+                try {
+                    await navigator.clipboard.writeText(npubText);
+                    // Show brief feedback
+                    const originalText = npubElement.textContent;
+                    npubElement.textContent = 'Copied!';
+                    setTimeout(() => {
+                        npubElement.textContent = originalText;
+                    }, 1500);
+                } catch (err) {
+                    log('Failed to copy npub', 'error');
+                }
+            }
+        }
+        
+        // Copy nsec to clipboard
+        async function copyNsec() {
+            const nsecElement = document.getElementById('privkey');
+            const nsecText = nsecElement.textContent;
+            
+            if (nsecText && nsecText !== 'generating...') {
+                try {
+                    await navigator.clipboard.writeText(nsecText);
+                    // Show brief feedback
+                    const originalText = nsecElement.textContent;
+                    nsecElement.textContent = 'Copied!';
+                    setTimeout(() => {
+                        nsecElement.textContent = originalText;
+                    }, 1500);
+                } catch (err) {
+                    log('Failed to copy nsec', 'error');
+                }
+            }
+        }
+        
+        // Copy logs to clipboard
+        async function copyLogs() {
+            const logElement = document.getElementById('logs');
+            if (!logElement) {
+                console.error('Log element not found');
+                return;
+            }
+            
+            // Get all log entries except the last one (which will be the "copied" message)
+            const allEntries = Array.from(logElement.children);
+            const logs = allEntries.map(child => child.textContent).join('\n');
+            
+            if (logs) {
+                try {
+                    await navigator.clipboard.writeText(logs);
+                    // Add success message after copying
+                    log('Logs copied to clipboard!', 'success');
+                } catch (err) {
+                    console.error('Clipboard write failed:', err);
+                    // Fallback for iOS which might have clipboard restrictions
+                    try {
+                        // Create temporary textarea
+                        const textarea = document.createElement('textarea');
+                        textarea.value = logs;
+                        textarea.style.position = 'fixed';
+                        textarea.style.opacity = '0';
+                        document.body.appendChild(textarea);
+                        textarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textarea);
+                        log('Logs copied to clipboard!', 'success');
+                    } catch (fallbackErr) {
+                        log('Failed to copy logs', 'error');
+                    }
+                }
+            }
+        }
+
+        function generateKeys() {
+            try {
+                if (!window.NostrTools) {
+                    throw new Error('NostrTools not loaded');
+                }
+                
+                // Check for existing key
+                const storedKey = localStorage.getItem('privateKey');
+            
+            if (storedKey) {
+                // Stored as hex string
+                privateKey = storedKey;
+                // Get public key - both are hex strings
+                publicKey = window.NostrTools.getPublicKey(privateKey);
+                // npubEncode expects hex string directly!
+                const npub = window.NostrTools.nip19.npubEncode(publicKey);
+                log(`Restored existing keypair: ${npub.substring(0, 30)}...`, 'info');
+            } else {
+                // Generate new key - generateSecretKey returns Uint8Array, convert to hex
+                const secretKeyBytes = window.NostrTools.generateSecretKey();
+                // Convert bytes to hex string
+                const bytesToHex = (bytes) => Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+                privateKey = bytesToHex(secretKeyBytes);
+                localStorage.setItem('privateKey', privateKey);
+                // Get public key - both are hex strings
+                publicKey = window.NostrTools.getPublicKey(privateKey);
+                // npubEncode expects hex string directly!
+                const npub = window.NostrTools.nip19.npubEncode(publicKey);
+                log(`Generated new keypair: ${npub.substring(0, 30)}...`, 'success');
+            }
+            
+            // Convert to bech32 formats for display
+            // npubEncode expects hex string, nsecEncode expects bytes
+            const hexToBytes = (hex) => new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+            const npub = window.NostrTools.nip19.npubEncode(publicKey);  // hex string
+            const nsec = window.NostrTools.nip19.nsecEncode(hexToBytes(privateKey));  // bytes
+            
+            // Update UI with full keys for testing
+            document.getElementById('pubkey').textContent = npub;
+            document.getElementById('privkey').textContent = nsec;
+            } catch (error) {
+                console.error('Key generation error:', error);
+                log(`Key generation failed: ${error.message}`, 'error');
+                document.getElementById('pubkey').textContent = 'Error: ' + error.message;
+                document.getElementById('privkey').textContent = 'Error: ' + error.message;
+            }
+        }
+
+        // Helper function to ensure messaging is initialized
+        async function ensureMessagingInitialized() {
+            if (messaging) {
+                return true;
+            }
+            
+            if (!vapidPublicKey) {
+                log('Cannot initialize messaging: no VAPID key', 'error');
+                return false;
+            }
+            
+            if (firebase.apps.length === 0) {
+                log('Cannot initialize messaging: Firebase app not initialized', 'error');
+                return false;
+            }
+            
+            if (!('serviceWorker' in navigator)) {
+                log('Cannot initialize messaging: Service Worker not available', 'error');
+                return false;
+            }
+            
+            try {
+                // Wait for service worker to be ready
+                const registration = await navigator.serviceWorker.ready;
+                log(`Service Worker ready for messaging (scope: ${registration.scope})`, 'info');
+                
+                messaging = firebase.messaging();
+                log('Firebase Messaging initialized on demand', 'success');
+                return true;
+            } catch (e) {
+                log(`Failed to initialize messaging on demand: ${e.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function initializeFirebase() {
+            try {
+                const response = await fetch('/config/fcm.json', { cache: 'no-store' });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    log(`FCM config error: ${response.status} - ${errorText.substring(0, 100)}`, 'error');
+                    return false;
+                }
+                
+                const responseText = await response.text();
+                
+                let config;
+                try {
+                    config = JSON.parse(responseText);
+                } catch (e) {
+                    log(`Invalid FCM config JSON: ${e.message}`, 'error');
+                    log(`Response: ${responseText.substring(0, 200)}`, 'error');
+                    return false;
+                }
+                
+                if (!config.apiKey || config.apiKey === "") {
+                    log('Firebase not configured. Push disabled.', 'warning');
+                    document.getElementById('register').disabled = true;
+                    return false;
+                }
+                
+                // Store the VAPID key early
+                vapidPublicKey = config.vapidPublicKey;
+                log(`VAPID key stored: ${vapidPublicKey ? vapidPublicKey.substring(0, 20) + '...' : 'NOT PROVIDED'}`, 'info');
+                
+                // Check if Firebase is already initialized
+                if (firebase.apps.length > 0) {
+                    log('Firebase already initialized, reusing existing app', 'info');
+                } else {
+                    firebase.initializeApp(config);
+                    log('Firebase app initialized', 'success');
+                }
+                
+                // Check if we're in a secure context (required for service workers and notifications)
+                if (!window.isSecureContext) {
+                    log('⚠️ Not in secure context!', 'error');
+                    log(`Current URL: ${window.location.href}`, 'info');
+                    log('Push notifications require HTTPS or localhost', 'error');
+                    
+                    if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+                        log('Solutions:', 'info');
+                        log('1. Use the HTTPS ngrok URL', 'info');
+                        log('2. Or access via http://localhost:8000', 'info');
+                    }
+                    
+                    // Still try to initialize but it likely won't work
+                    messaging = null;
+                    document.getElementById('register').disabled = true;
+                    return false;
+                }
+                
+                // Initialize Firebase Messaging - try multiple times on iOS PWA
+                // isIOS already declared at app init
+                const isPWA = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+                
+                if ('serviceWorker' in navigator) {
+                    // For iOS PWA, we might need to wait for service worker
+                    if (isIOS && isPWA) {
+                        log('iOS PWA detected - ensuring service worker is ready...', 'info');
+                        
+                        // Check if a service worker is already registered
+                        const existingReg = await navigator.serviceWorker.getRegistration('/');
+                        if (existingReg) {
+                            log('Existing service worker found, waiting for it to be ready...', 'info');
+                            try {
+                                // Wait with a timeout
+                                const readyPromise = navigator.serviceWorker.ready;
+                                const timeoutPromise = new Promise((_, reject) => 
+                                    setTimeout(() => reject(new Error('Timeout waiting for SW')), 5000)
+                                );
+                                const registration = await Promise.race([readyPromise, timeoutPromise]);
+                                log(`Service Worker ready (scope: ${registration.scope})`, 'success');
+                            } catch (e) {
+                                log(`Service Worker ready wait failed or timed out: ${e.message}`, 'warning');
+                            }
+                        } else {
+                            log('No service worker registered yet, skipping ready wait', 'info');
+                        }
+                    }
+                    
+                    // Try to initialize messaging
+                    let retries = isIOS && isPWA ? 3 : 1;
+                    let initialized = false;
+                    
+                    for (let i = 0; i < retries; i++) {
+                        try {
+                            if (i > 0) {
+                                log(`Retrying Firebase Messaging init (attempt ${i + 1}/${retries})...`, 'info');
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                            }
+                            
+                            messaging = firebase.messaging();
+                            log('Firebase Messaging initialized successfully', 'success');
+                            initialized = true;
+                            break;
+                        } catch (e) {
+                            log(`Firebase Messaging init attempt ${i + 1} failed: ${e.message}`, 'error');
+                            if (e.message.includes('No handler for message type')) {
+                                log('Service worker might not be fully loaded yet', 'info');
+                            }
+                        }
+                    }
+                    
+                    if (!initialized) {
+                        log('Failed to initialize Firebase Messaging after retries', 'error');
+                        messaging = null;
+                        // Don't return false - VAPID key is still set
+                    }
+                } else {
+                    log('Service Worker API not available', 'error');
+                    messaging = null;
+                    // Don't return false - VAPID key is still set
+                }
+                
+                // Handle foreground messages
+                messaging.onMessage(async (payload) => {
+                    log(`Message received: ${payload.data?.title || 'Notification'}`, 'success');
+                    
+                    // Check notification permission first
+                    if (Notification.permission !== 'granted') {
+                        log('Notification permission not granted', 'warning');
+                        return;
+                    }
+                    
+                    // For Android PWA, use service worker to show notification
+                    // This ensures consistent behavior across foreground/background
+                    try {
+                        if ('serviceWorker' in navigator) {
+                            const registration = await navigator.serviceWorker.ready;
+                            const title = payload.data?.title || 'New Message';
+                            const options = {
+                                body: payload.data?.body || '',
+                                icon: '/icon-192x192.png',
+                                badge: '/badge-72x72.png',
+                                data: payload.data,
+                                tag: payload.data?.nostrEventId || `nostr-${Date.now()}`,
+                                requireInteraction: false,
+                                vibrate: [200, 100, 200]
+                            };
+                            
+                            await registration.showNotification(title, options);
+                            log('Notification shown via Service Worker', 'info');
+                        } else {
+                            // Fallback for non-PWA environments
+                            const notification = new Notification(
+                                payload.data?.title || 'New Message',
+                                {
+                                    body: payload.data?.body || '',
+                                    icon: '/favicon.ico'
+                                }
+                            );
+                            
+                            notification.onclick = () => {
+                                window.focus();
+                                notification.close();
+                            };
+                            log('Notification shown via Notification API', 'info');
+                        }
+                    } catch (err) {
+                        log(`Notification error: ${err.message}`, 'error');
+                        // Try fallback method
+                        try {
+                            const notification = new Notification(
+                                payload.data?.title || 'New Message',
+                                {
+                                    body: payload.data?.body || '',
+                                    icon: '/favicon.ico'
+                                }
+                            );
+                            
+                            notification.onclick = () => {
+                                window.focus();
+                                notification.close();
+                            };
+                            log('Notification shown via fallback', 'info');
+                        } catch (fallbackErr) {
+                            log(`Fallback also failed: ${fallbackErr.message}`, 'error');
+                        }
+                    }
+                });
+                
+                log('Firebase initialized', 'success');
+                return true;
+            } catch (error) {
+                log(`Firebase init failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        async function connectToRelay() {
+            try {
+                if (!pool) {
+                    log('Pool not initialized', 'error');
+                    return;
+                }
+                await pool.ensureRelay(relayUrl);
+                
+                document.getElementById('relayStatus').textContent = relayUrl;
+                log(`Connected to relay`, 'success');
+            } catch (error) {
+                log(`Relay connection failed: ${error.message}`, 'error');
+                document.getElementById('relayStatus').textContent = 'error';
+            }
+        }
+
+        async function checkRegistrationStatus() {
+            // First check registration status from Nostr
+            await checkRegistrationFromNostr();
+            
+            // Then check subscription status from Nostr
+            await checkSubscriptionFromNostr();
+        }
+        
+        async function checkRegistrationFromNostr() {
+            try {
+                // Query for both registration (3079) and deregistration (3080) events
+                const filter = {
+                    kinds: [3079, 3080],
+                    authors: [publicKey],
+                    limit: 10
+                };
+                
+                const events = await pool.querySync([relayUrl], filter);
+                
+                if (events && events.length > 0) {
+                    // Sort by created_at to get the most recent event
+                    events.sort((a, b) => b.created_at - a.created_at);
+                    const latestEvent = events[0];
+                    
+                    // Check if the latest event is a registration or deregistration
+                    if (latestEvent.kind === 3079) {
+                        // Latest event is a registration
+                        currentFcmToken = latestEvent.content || 'registered';
+                        isRegistered = true;
+                        updatePushUI(true);
+                        localStorage.setItem('fcmToken', currentFcmToken);
+                        localStorage.setItem('fcmTokenOwner', publicKey);
+                        document.getElementById('fcmToken').textContent = currentFcmToken.substring(0, 20) + '...';
+                        // log('Found active registration from Nostr', 'info');
+                    } else if (latestEvent.kind === 3080) {
+                        // Latest event is a deregistration
+                        currentFcmToken = null;
+                        isRegistered = false;
+                        updatePushUI(false);
+                        localStorage.removeItem('fcmToken');
+                        localStorage.removeItem('fcmTokenOwner');
+                        document.getElementById('fcmToken').textContent = '';
+                        // log('Found deregistration from Nostr', 'info');
+                    }
+                } else {
+                    // No registration events found - check localStorage as fallback
+                    const savedToken = localStorage.getItem('fcmToken');
+                    const savedOwner = localStorage.getItem('fcmTokenOwner');
+                    
+                    if (savedToken && savedOwner === publicKey) {
+                        currentFcmToken = savedToken;
+                        isRegistered = true;
+                        updatePushUI(true);
+                        document.getElementById('fcmToken').textContent = savedToken.substring(0, 20) + '...';
+                    } else {
+                        isRegistered = false;
+                        updatePushUI(false);
+                    }
+                }
+            } catch (error) {
+                // log(`Failed to check registration status: ${error.message}`, 'error');
+                // Fall back to localStorage
+                const savedToken = localStorage.getItem('fcmToken');
+                const savedOwner = localStorage.getItem('fcmTokenOwner');
+                
+                if (savedToken && savedOwner === publicKey) {
+                    currentFcmToken = savedToken;
+                    isRegistered = true;
+                    updatePushUI(true);
+                    document.getElementById('fcmToken').textContent = savedToken.substring(0, 20) + '...';
+                } else {
+                    isRegistered = false;
+                    updatePushUI(false);
+                }
+            }
+        }
+        
+        async function checkSubscriptionFromNostr() {
+            try {
+                // Query for both subscription (3081) and unsubscription (3082) events
+                const filter = {
+                    kinds: [3081, 3082],
+                    authors: [publicKey],
+                    limit: 10
+                };
+                
+                const events = await pool.querySync([relayUrl], filter);
+                
+                if (events && events.length > 0) {
+                    // Sort by created_at to get the most recent event
+                    events.sort((a, b) => b.created_at - a.created_at);
+                    const latestEvent = events[0];
+                    
+                    // Check if the latest event is a subscription or unsubscription
+                    if (latestEvent.kind === 3081) {
+                        // Latest event is a subscription
+                        isSubscribed = true;
+                        updateSubUI(true);
+                        localStorage.setItem('isSubscribed', 'true');
+                        // log('Found active subscription from Nostr', 'info');
+                    } else if (latestEvent.kind === 3082) {
+                        // Latest event is an unsubscription
+                        isSubscribed = false;
+                        updateSubUI(false);
+                        localStorage.removeItem('isSubscribed');
+                        // log('Found unsubscription from Nostr', 'info');
+                    }
+                } else {
+                    // No subscription events found
+                    isSubscribed = false;
+                    updateSubUI(false);
+                    localStorage.removeItem('isSubscribed');
+                }
+            } catch (error) {
+                // log(`Failed to check subscription status: ${error.message}`, 'error');
+                // Fall back to localStorage
+                const subStatus = localStorage.getItem('isSubscribed');
+                if (subStatus === 'true') {
+                    isSubscribed = true;
+                    updateSubUI(true);
+                } else {
+                    isSubscribed = false;
+                    updateSubUI(false);
+                }
+            }
+        }
+
+        async function handleTokenRegistration(token) {
+            try {
+                currentFcmToken = token;
+                document.getElementById('fcmToken').textContent = token.substring(0, 20) + '...';
+                
+                // Encrypt token using NIP-44
+                const encryptedContent = await encryptTokenForService(currentFcmToken);
+                
+                // Add expiration tag (1 year from now)
+                const expirationTime = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
+                
+                // Send registration event with encrypted content and required tags
+                const event = finalizeEvent({
+                    kind: 3079,
+                    content: encryptedContent,
+                    tags: [
+                        ['app', APP_NAME],
+                        ['p', servicePubkey],
+                        ['expiration', expirationTime.toString()]
+                    ],
+                    created_at: Math.floor(Date.now() / 1000)
+                }, privateKey);
+
+                await pool.publish([relayUrl], event);
+                
+                // Save registration
+                localStorage.setItem('fcmToken', currentFcmToken);
+                localStorage.setItem('fcmTokenOwner', publicKey);
+                isRegistered = true;
+                updatePushUI(true);
+                
+                log('✅ Registration complete with encrypted token!', 'success');
+                updateRegistrationStatus();
+            } catch (error) {
+                log(`Registration error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+        
+        async function registerForPush() {
+            try {
+                // Ensure all required functions are initialized
+                if (!finalizeEvent || !pool || !privateKey || !publicKey) {
+                    log('App not fully initialized. Please wait a moment and try again.', 'error');
+                    return;
+                }
+                
+                // isIOS already declared at app init
+                const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+                
+                // Debug: Log environment details
+                log('=== Environment Check ===', 'info');
+                log(`Platform: ${isIOS ? 'iOS' : 'non-iOS'}`, 'info');
+                log(`Mode: ${isStandalone ? 'PWA/Standalone' : 'Browser'}`, 'info');
+                log(`URL: ${window.location.href}`, 'info');
+                log(`Secure Context: ${window.isSecureContext ? '✅ YES' : '❌ NO'}`, 'info');
+                
+                // Check API availability
+                log('=== API Availability ===', 'info');
+                log(`Notification: ${'Notification' in window ? '✅ YES' : '❌ NO'}`, 'info');
+                log(`PushManager: ${'PushManager' in window ? '✅ YES' : '❌ NO'}`, 'info');
+                log(`ServiceWorker: ${'serviceWorker' in navigator ? '✅ YES' : '❌ NO'}`, 'info');
+                
+                // Check if we're in secure context
+                if (!window.isSecureContext) {
+                    log('❌ Not in secure context - APIs won\'t be available!', 'error');
+                    log('Use HTTPS URL or http://localhost', 'error');
+                    return;
+                }
+                
+                // Check iframe (ngrok warning)
+                if (window !== window.top) {
+                    log('⚠️ Page in iframe - might be ngrok warning', 'warning');
+                    log('Click "Visit Site" if you see ngrok page', 'info');
+                }
+                
+                // Check for Notification API support
+                if (!('Notification' in window)) {
+                    log('Notification API not found', 'error');
+                    
+                    // Check if iOS
+                    if (isIOS) {
+                        if (!isStandalone) {
+                            log('📱 iOS detected - Push requires PWA mode!', 'error');
+                            log('To enable push notifications:', 'info');
+                            log('1. Tap Share button (box with arrow)', 'info');
+                            log('2. Select "Add to Home Screen"', 'info');
+                            log('3. Open app from home screen', 'info');
+                            log('4. Register for push from the PWA', 'info');
+                        } else {
+                            // In PWA but still no API - probably HTTP
+                            log('⚠️ HTTPS required for notifications!', 'error');
+                            log('Use HTTPS URL or http://localhost', 'error');
+                        }
+                    } else if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+                        // Non-iOS, insecure context
+                        log('⚠️ HTTPS required for notifications!', 'error');
+                        log(`You're using: ${window.location.protocol}//${window.location.hostname}`, 'info');
+                        log('Options:', 'info');
+                        log('1. Use http://localhost:8000 instead', 'info');
+                        log('2. Set up HTTPS for this domain', 'info');
+                    } else {
+                        // Non-iOS, other issue
+                        log('Push notifications not supported in this browser', 'info');
+                        log('Try Chrome, Firefox, or Safari 16.4+', 'info');
+                    }
+                    return;
+                }
+                
+                // Additional check for push manager
+                if (!('PushManager' in window)) {
+                    log('PushManager not available', 'error');
+                    log('Web Push might not be supported in this browser', 'info');
+                    return;
+                }
+                
+                // iOS-specific push notification requirements
+                if (isIOS) {
+                    log('=== iOS Push Requirements ===', 'info');
+                    
+                    if (!isStandalone) {
+                        // Safari browser - push NOT supported on iOS
+                        log('❌ iOS Safari browser - Push not available here', 'error');
+                        log('iOS requires PWA mode for push notifications:', 'info');
+                        log('1. Tap Share button (box with arrow)', 'info');
+                        log('2. Select "Add to Home Screen"', 'info');
+                        log('3. Open app from home screen', 'info');
+                        log('4. Register for push from the PWA', 'info');
+                        return;
+                    }
+                    
+                    // In PWA mode - push should work!
+                    log('✅ iOS PWA mode - Push supported!', 'success');
+                    
+                    // Double-check service worker availability
+                    if (!('serviceWorker' in navigator)) {
+                        log('⚠️ Service Worker not found in iOS PWA', 'error');
+                        log('Ensure you\'re using HTTPS!', 'error');
+                        log(`Current context secure: ${window.isSecureContext}`, 'info');
+                        
+                        // Wait and retry once
+                        log('Waiting 2 seconds and retrying...', 'info');
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        
+                        if (!('serviceWorker' in navigator)) {
+                            log('❌ Service Worker still unavailable', 'error');
+                            return;
+                        }
+                        log('✅ Service Worker now available!', 'success');
+                    }
+                }
+                
+                // Check browser support - in PWA mode, serviceWorker might not be immediately available
+                let serviceWorkerAvailable = 'serviceWorker' in navigator;
+                
+                // If in PWA mode and service worker not available, wait a bit
+                if (!serviceWorkerAvailable && window.navigator.standalone) {
+                    log('Waiting for service worker API...', 'info');
+                    for (let i = 0; i < 10; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        if ('serviceWorker' in navigator) {
+                            serviceWorkerAvailable = true;
+                            log('Service worker API now available', 'success');
+                            break;
+                        }
+                    }
+                }
+                
+                if (!serviceWorkerAvailable) {
+                    log('Service workers not supported', 'error');
+                    log('Try closing and reopening the app', 'info');
+                    return;
+                }
+                
+                if (typeof firebase.messaging?.isSupported === 'function' && !firebase.messaging.isSupported()) {
+                    log('FCM/Web Push not supported in this browser', 'error');
+                    return;
+                }
+                
+                // Check current permission status first
+                const currentPermission = Notification.permission;
+                log(`Current notification permission: ${currentPermission}`, 'info');
+                
+                if (currentPermission === 'denied') {
+                    log('❌ Notifications were previously denied', 'error');
+                    log('You need to:', 'info');
+                    log('1. Go to Settings > Notifications > [This App]', 'info');
+                    log('2. Enable notifications', 'info');
+                    log('3. Refresh this page', 'info');
+                    throw new Error('Notification permission previously denied');
+                }
+                
+                let permission = currentPermission;
+                if (permission !== 'granted') {
+                    log('Requesting notification permission...', 'info');
+                    
+                    // On iOS, requestPermission might not work immediately in PWA
+                    try {
+                        permission = await Notification.requestPermission();
+                        log(`Permission response: ${permission}`, 'info');
+                    } catch (e) {
+                        log(`Permission request error: ${e.message}`, 'error');
+                        
+                        // On iOS PWA, sometimes the permission is auto-granted
+                        if (isIOS && isStandalone) {
+                            // Check if permission was actually granted despite the error
+                            permission = Notification.permission;
+                            log(`Permission after error check: ${permission}`, 'info');
+                        }
+                    }
+                }
+                
+                if (permission !== 'granted') {
+                    log(`❌ Permission not granted: ${permission}`, 'error');
+                    throw new Error(`Notification permission: ${permission}`);
+                }
+                
+                log('✅ Notification permission granted', 'success');
+                
+                // Get existing registration or register new service worker
+                let registration = await navigator.serviceWorker.getRegistration('/');
+                
+                if (!registration) {
+                    log('No existing service worker, registering new one...', 'info');
+                    registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+                    await navigator.serviceWorker.ready;
+                    log('New service worker registered and ready', 'success');
+                } else {
+                    log('Using existing service worker registration', 'success');
+                    // Check if it needs an update
+                    registration.update().catch(err => {
+                        log(`SW update check failed: ${err.message}`, 'warning');
+                    });
+                }
+                
+                // Debug messaging and vapid status BEFORE the if statement
+                log(`=== FCM Token Request Debug ===`, 'info');
+                log(`messaging object: ${typeof messaging} - ${messaging ? 'exists' : 'null/undefined'}`, 'info');
+                log(`vapidPublicKey: ${vapidPublicKey ? vapidPublicKey.substring(0, 20) + '...' : 'NULL/UNDEFINED'}`, 'info');
+                
+                // Ensure messaging is initialized before requesting token
+                if (!messaging) {
+                    log('Messaging not initialized, attempting to initialize now...', 'info');
+                    const messagingReady = await ensureMessagingInitialized();
+                    if (!messagingReady) {
+                        log('Failed to initialize messaging, cannot get FCM token', 'error');
+                        log('Try refreshing the page or reinstalling the PWA', 'info');
+                    }
+                }
+                
+                // Try to get FCM token with detailed error handling
+                if (messaging && vapidPublicKey) {
+                    log('Preparing FCM token request...', 'info');
+                    log(`VAPID key: ${vapidPublicKey.substring(0, 20)}...`, 'info');
+                    log(`Service Worker Registration: ${registration ? 'present' : 'missing'}`, 'info');
+                    log(`SW scope: ${registration?.scope}`, 'info');
+                    log(`SW state: ${registration?.active?.state}`, 'info');
+                    
+                    try {
+                        log('Calling messaging.getToken()...', 'info');
+                        const token = await messaging.getToken({
+                            vapidKey: vapidPublicKey,
+                            serviceWorkerRegistration: registration
+                        });
+                        
+                        if (token) {
+                            currentFcmToken = token;
+                            document.getElementById('fcmToken').textContent = token.substring(0, 20) + '...';
+                            log(`FCM token received: ${token.substring(0, 20)}...`, 'success');
+                        } else {
+                            log('WARNING: getToken returned null/undefined', 'warning');
+                            log('This can happen on iOS if push permissions were not granted', 'warning');
+                            
+                            // On iOS PWA, sometimes we need to wait for SW to be ready
+                            if (isIOS) {
+                                log('iOS detected - retrying token request after delay...', 'info');
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                
+                                const retryToken = await messaging.getToken({
+                                    vapidKey: vapidPublicKey,
+                                    serviceWorkerRegistration: registration
+                                });
+                                
+                                if (retryToken) {
+                                    currentFcmToken = retryToken;
+                                    document.getElementById('fcmToken').textContent = retryToken.substring(0, 20) + '...';
+                                    log(`FCM token received on retry: ${retryToken.substring(0, 20)}...`, 'success');
+                                } else {
+                                    log('ERROR: Still no FCM token after retry', 'error');
+                                    log('Possible causes:', 'error');
+                                    log('1. Push notifications not properly enabled in iOS settings', 'error');
+                                    log('2. Firebase configuration issue', 'error');
+                                    log('3. PWA needs to be reinstalled', 'error');
+                                }
+                            }
+                        }
+                    } catch (tokenError) {
+                        log(`❌ FCM token error: ${tokenError.message}`, 'error');
+                        if (tokenError.code) {
+                            log(`Error code: ${tokenError.code}`, 'error');
+                        }
+                        
+                        // Detailed iOS debugging
+                        if (isIOS) {
+                            log('=== iOS FCM Token Debug ===', 'error');
+                            log(`iOS PWA mode: ${isStandalone ? 'YES' : 'NO'}`, 'info');
+                            log(`navigator.standalone: ${window.navigator.standalone}`, 'info');
+                            log(`Notification.permission: ${Notification.permission}`, 'info');
+                            log(`messaging initialized: ${messaging ? 'YES' : 'NO'}`, 'info');
+                            log(`Service worker state: ${registration?.active?.state}`, 'info');
+                            
+                            // Common iOS issues
+                            if (tokenError.message.includes('messaging/unsupported-browser')) {
+                                log('iOS browser doesn\'t support FCM', 'error');
+                                log('Make sure you\'re using Safari 16.4+ and running as PWA', 'info');
+                            } else if (tokenError.message.includes('messaging/failed-service-worker-registration')) {
+                                log('Service worker registration issue', 'error');
+                                log('Try refreshing the page', 'info');
+                            } else if (tokenError.message.includes('messaging/token-subscribe-failed')) {
+                                log('Failed to subscribe for push', 'error');
+                                log('Check that push notifications are enabled in iOS Settings', 'info');
+                            }
+                        }
+                        
+                        throw tokenError;
+                    }
+                } else {
+                    log('WARNING: messaging or vapidPublicKey not available', 'warning');
+                    log(`messaging: ${messaging ? 'defined' : 'undefined'}`, 'warning');
+                    log(`vapidPublicKey: ${vapidPublicKey ? 'defined' : 'undefined'}`, 'warning');
+                }
+                
+                // Debug: Log the state before creating event
+                log('=== Creating Registration Event ===', 'info');
+                log(`finalizeEvent function: ${typeof finalizeEvent}`, 'info');
+                log(`privateKey: ${privateKey ? privateKey.substring(0, 10) + '...' : 'UNDEFINED'}`, 'info');
+                log(`publicKey: ${publicKey ? publicKey.substring(0, 10) + '...' : 'UNDEFINED'}`, 'info');
+                log(`currentFcmToken: ${currentFcmToken ? currentFcmToken.substring(0, 20) + '...' : 'UNDEFINED'}`, 'info');
+                log(`servicePubkey: ${servicePubkey ? servicePubkey.substring(0, 10) + '...' : 'UNDEFINED'}`, 'info');
+                
+                // Encrypt token using NIP-44
+                const encryptedContent = await encryptTokenForService(currentFcmToken || '');
+                log(`Encrypted content: ${encryptedContent.substring(0, 50)}...`, 'info');
+                
+                // Add expiration tag (1 year from now)
+                const expirationTime = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
+                
+                // Create the event object first to debug it
+                const eventData = {
+                    kind: 3079,
+                    content: encryptedContent,
+                    tags: [
+                        ['app', APP_NAME],
+                        ['p', servicePubkey],
+                        ['expiration', expirationTime.toString()]
+                    ],
+                    created_at: Math.floor(Date.now() / 1000)
+                };
+                log(`Event data before finalize: ${JSON.stringify(eventData)}`, 'info');
+                
+                // Check if we have all required functions
+                if (!finalizeEvent) {
+                    log('ERROR: finalizeEvent is not defined!', 'error');
+                    log('Available NostrTools functions:', 'error');
+                    if (window.NostrTools) {
+                        log(Object.keys(window.NostrTools).join(', '), 'error');
+                    } else {
+                        log('NostrTools is not loaded!', 'error');
+                    }
+                    throw new Error('finalizeEvent is not defined');
+                }
+                
+                if (!privateKey) {
+                    log('ERROR: privateKey is not defined!', 'error');
+                    throw new Error('privateKey is not defined');
+                }
+                
+                // Try to create the event with detailed error catching
+                let event;
+                try {
+                    event = finalizeEvent(eventData, privateKey);
+                    log(`Event created successfully: id=${event.id?.substring(0, 10)}...`, 'success');
+                } catch (finalizeError) {
+                    log(`ERROR in finalizeEvent: ${finalizeError.message}`, 'error');
+                    log(`Stack trace: ${finalizeError.stack}`, 'error');
+                    
+                    // Try to manually check what getPublicKey returns
+                    if (window.NostrTools && window.NostrTools.getPublicKey) {
+                        try {
+                            const testPubkey = window.NostrTools.getPublicKey(privateKey);
+                            log(`Manual getPublicKey test: ${testPubkey ? testPubkey.substring(0, 10) + '...' : 'FAILED'}`, 'info');
+                        } catch (e) {
+                            log(`Manual getPublicKey failed: ${e.message}`, 'error');
+                        }
+                    }
+                    
+                    throw finalizeError;
+                }
+                
+                await pool.publish([relayUrl], event);
+                
+                // Save registration
+                localStorage.setItem('fcmToken', currentFcmToken);
+                localStorage.setItem('fcmTokenOwner', publicKey);
+                isRegistered = true;
+                updatePushUI(true);
+                
+                log('✅ Push notifications enabled', 'success');
+                updateServiceWorkerCount();
+            } catch (error) {
+                log(`Registration failed: ${error.message}`, 'error');
+                // Additional context for debugging
+                log(`Error type: ${error.constructor.name}`, 'error');
+                if (error.stack) {
+                    log(`Stack trace: ${error.stack.substring(0, 500)}`, 'error');
+                }
+            }
+        }
+
+        async function deregisterPush() {
+            try {
+                // First unsubscribe if needed
+                if (isSubscribed) {
+                    await unsubscribeFromChats();
+                }
+                
+                // Delete the FCM token to stop push notifications
+                if (messaging && currentFcmToken) {
+                    try {
+                        await messaging.deleteToken();
+                        log('FCM token deleted', 'info');
+                    } catch (e) {
+                        log(`deleteToken failed: ${e.message}`, 'warning');
+                    }
+                }
+                
+                // Encrypt token for deregistration
+                let encryptedContent = '';
+                if (currentFcmToken) {
+                    try {
+                        encryptedContent = await encryptTokenForService(currentFcmToken);
+                    } catch (e) {
+                        log(`Failed to encrypt token for deregistration: ${e.message}`, 'warning');
+                        // Continue with empty content if encryption fails
+                    }
+                }
+                
+                // Send deregistration event with encrypted token and required tags
+                const event = finalizeEvent({
+                    kind: 3080,
+                    content: encryptedContent,
+                    tags: [
+                        ['app', APP_NAME],
+                        ['p', servicePubkey]
+                    ],
+                    created_at: Math.floor(Date.now() / 1000)
+                }, privateKey);
+                
+                await pool.publish([relayUrl], event);
+                
+                // Clear local data
+                localStorage.removeItem('fcmToken');
+                localStorage.removeItem('fcmTokenOwner');
+                localStorage.removeItem('isSubscribed');
+                
+                isRegistered = false;
+                updatePushUI(false);
+                
+                log('❌ Push notifications disabled', 'success');
+            } catch (error) {
+                log(`Deregistration failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function subscribeToChats() {
+            try {
+                const filter = { kinds: [9] }; // Kind 9 for chat messages
+                
+                // Create the subscription payload with just the filter
+                const payload = {
+                    filter: filter
+                };
+                
+                // Encrypt the payload using NIP-44 (use encryptFilterForService for direct encryption)
+                const encryptedContent = await encryptFilterForService(payload);
+                
+                // Add expiration tag (30 days from now)
+                const expirationTime = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
+                
+                const event = finalizeEvent({
+                    kind: 3081,
+                    content: encryptedContent,
+                    tags: [
+                        ['app', APP_NAME],
+                        ['p', servicePubkey],
+                        ['expiration', expirationTime.toString()]
+                    ],
+                    created_at: Math.floor(Date.now() / 1000)
+                }, privateKey);
+                
+                await pool.publish([relayUrl], event);
+                
+                log('📥 Subscribed to kind 9 events', 'success');
+                
+                // Check actual subscription status from relay
+                setTimeout(() => checkSubscriptionStatus(), 1000);
+            } catch (error) {
+                log(`Subscription failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function unsubscribeFromChats() {
+            try {
+                // For unsubscribe, we send the same filter to delete
+                const filter = { kinds: [9] }; // Same filter as subscription
+                const payload = {
+                    filter: filter
+                };
+                
+                // Encrypt the payload using NIP-44 (use encryptFilterForService for direct encryption)
+                const encryptedContent = await encryptFilterForService(payload);
+                
+                const event = finalizeEvent({
+                    kind: 3082,
+                    content: encryptedContent,
+                    tags: [
+                        ['app', APP_NAME],
+                        ['p', servicePubkey]
+                    ],
+                    created_at: Math.floor(Date.now() / 1000)
+                }, privateKey);
+                
+                await pool.publish([relayUrl], event);
+                
+                log('🚫 Unsubscribed from chats', 'success');
+                
+                // Check actual subscription status from relay
+                setTimeout(() => checkSubscriptionStatus(), 1000);
+            } catch (error) {
+                log(`Unsubscribe failed: ${error.message}`, 'error');
+            }
+        }
+
+        function subscribeToIncomingEvents() {
+            // Subscribe to kind 9 and kind 1059 (DM) events to see if they arrive
+            const sub = pool.subscribeMany([relayUrl], [
+                {
+                    kinds: [9],
+                    limit: 10
+                },
+                {
+                    kinds: [1059],  // Gift-wrapped DMs
+                    '#p': [publicKey],  // Where we're a recipient
+                    limit: 10
+                }
+            ], {
+                onevent(event) {
+                if (event.kind === 1059) {
+                    // Handle DM event
+                    const isRecipient = event.tags.some(tag => tag[0] === 'p' && tag[1] === publicKey);
+                    if (isRecipient) {
+                        log(`📥 Received encrypted DM`, 'info');
+                    }
+                } else if (event.kind === 9) {
+                    // Handle chat event
+                    const authorNpub = window.NostrTools.nip19.npubEncode(event.pubkey);
+                    const isOwnEvent = event.pubkey === publicKey;
+                    
+                    // Skip logging chat messages to reduce noise
+                    // log(`📨 Chat from ${authorNpub.substring(0, 20)}...${isOwnEvent ? ' (you)' : ''}: "${event.content.substring(0, 50)}"`, 'info');
+                    
+                    // Only check mentions if it's NOT our own event
+                    if (!isOwnEvent) {
+                        const mentionedPubkeys = event.tags.filter(tag => tag[0] === 'p').map(tag => tag[1]);
+                        if (mentionedPubkeys.includes(publicKey)) {
+                            log(`🔔 You were mentioned in this event!`, 'success');
+                        }
+                    }
+                }
+                }
+            });
+            
+            // log('👂 Listening for events...', 'info');
+        }
+        
+        async function sendDM() {
+            try {
+                // Get recipient (default to self for testing)
+                const recipientNpub = prompt('Enter recipient npub (or leave empty to send to yourself):');
+                let recipientPubkey;
+                
+                if (recipientNpub) {
+                    try {
+                        const decoded = window.NostrTools.nip19.decode(recipientNpub);
+                        if (decoded.type !== 'npub') {
+                            throw new Error('Invalid npub format');
+                        }
+                        recipientPubkey = decoded.data;
+                    } catch (e) {
+                        log(`Invalid npub: ${e.message}`, 'error');
+                        return;
+                    }
+                } else {
+                    recipientPubkey = publicKey;
+                }
+                
+                const message = document.getElementById('message').value || 'Test DM';
+                
+                // Create the inner event (kind 14 for DM)
+                const innerEvent = {
+                    kind: 14,  // NIP-17 DM kind
+                    content: message,
+                    tags: [['p', recipientPubkey]],
+                    created_at: Math.floor(Date.now() / 1000)
+                };
+                
+                // Check if NIP-59 is available
+                if (!window.NostrTools.nip59) {
+                    log('NIP-59 not available, sending test DM', 'warning');
+                    // Fallback: send unencrypted test DM
+                    const testDM = finalizeEvent({
+                        kind: 1059,
+                        content: JSON.stringify({ test: true, message: message }),
+                        tags: [['p', recipientPubkey]],
+                        created_at: Math.floor(Date.now() / 1000)
+                    }, privateKey);
+                    await pool.publish([relayUrl], testDM);
+                } else {
+                    // Gift wrap it using NIP-59
+                    const wrappedEvent = await window.NostrTools.nip59.wrapEvent(
+                        innerEvent,
+                        privateKey,
+                        recipientPubkey
+                    );
+                    await pool.publish([relayUrl], wrappedEvent);
+                }
+                
+                log(`📤 Sent encrypted DM${recipientPubkey === publicKey ? ' to yourself' : ''}`, 'success');
+                
+                // Clear message field
+                document.getElementById('message').value = '';
+            } catch (error) {
+                log(`Failed to send DM: ${error.message}`, 'error');
+            }
+        }
+        
+        async function sendTestMessage() {
+            try {
+                const message = document.getElementById('message').value || 'Test message';
+                
+                // Check if message contains @npub mention
+                const npubMatch = message.match(/@(npub[a-z0-9]+)/);
+                const mentionTags = [];
+                
+                if (npubMatch) {
+                    try {
+                        const decoded = window.NostrTools.nip19.decode(npubMatch[1]);
+                        if (decoded.type === 'npub') {
+                            mentionTags.push(['p', decoded.data]);
+                            log(`Mentioning ${npubMatch[1].substring(0, 20)}...`, 'info');
+                        }
+                    } catch (e) {
+                        log(`Invalid npub in message: ${e.message}`, 'error');
+                    }
+                } else {
+                    // Default to mentioning self for testing
+                    mentionTags.push(['p', publicKey]);
+                }
+                
+                const event = finalizeEvent({
+                    kind: 9,
+                    content: message,
+                    tags: mentionTags,
+                    created_at: Math.floor(Date.now() / 1000)
+                }, privateKey);
+                
+                await pool.publish([relayUrl], event);
+                
+                const npub = window.NostrTools.nip19.npubEncode(publicKey);
+                log(`📤 Sent chat: "${message.substring(0, 50)}"`, 'success');
+                
+                // Show who was mentioned
+                const mentionedPubkeys = event.tags.filter(tag => tag[0] === 'p');
+                if (mentionedPubkeys.length > 0) {
+                    mentionedPubkeys.forEach(tag => {
+                        const mentionedNpub = window.NostrTools.nip19.npubEncode(tag[1]);
+                        log(`👉 Mentioned: ${mentionedNpub.substring(0, 30)}...${tag[1] === publicKey ? ' (yourself)' : ''}`, 'info');
+                    });
+                }
+                document.getElementById('message').value = '';
+            } catch (error) {
+                log(`Send failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function clearAllData() {
+            if (!confirm('This will unsubscribe, deregister, and clear all data. Continue?')) return;
+            
+            try {
+                log('Starting complete data cleanup...', 'info');
+                
+                // Step 1: Unsubscribe from chats if subscribed
+                const subStatus = document.getElementById('subStatus').textContent;
+                if (subStatus === 'Subscribed') {
+                    log('Unsubscribing from kind 9 (kind 3082)...', 'info');
+                    await unsubscribeFromChats();
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Small delay
+                }
+                
+                // Step 2: Deregister push notifications if registered
+                if (isRegistered) {
+                    log('Deregistering push notifications (kind 3080)...', 'info');
+                    await deregisterPush();
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Small delay
+                }
+                
+                // Step 3: Clear localStorage
+                log('Clearing local storage...', 'info');
+                localStorage.clear();
+                
+                // Step 4: Unregister service workers
+                if ('serviceWorker' in navigator) {
+                    log('Unregistering service workers...', 'info');
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    for (let reg of registrations) {
+                        await reg.unregister();
+                        log(`Unregistered SW: ${reg.scope}`, 'info');
+                    }
+                }
+                
+                log('✅ Complete cleanup successful!', 'success');
+                log('Reloading page in 2 seconds...', 'info');
+                
+                // Reload page
+                setTimeout(() => location.reload(), 2000);
+            } catch (error) {
+                log(`❌ Cleanup failed: ${error.message}`, 'error');
+            }
+        }
+
+        function updatePushUI(registered) {
+            document.getElementById('register').disabled = registered;
+            document.getElementById('deregister').disabled = !registered;
+            
+            // Update subscription buttons based on both registration and subscription status
+            if (registered) {
+                document.getElementById('subscribe').disabled = isSubscribed;
+                document.getElementById('unsubscribe').disabled = !isSubscribed;
+            } else {
+                document.getElementById('subscribe').disabled = true;
+                document.getElementById('unsubscribe').disabled = true;
+            }
+            
+            const badge = document.getElementById('pushStatus');
+            if (registered) {
+                badge.textContent = 'Registered';
+                badge.className = 'status-badge active';
+            } else {
+                badge.textContent = 'Not Registered';
+                badge.className = 'status-badge inactive';
+            }
+        }
+
+        async function checkSubscriptionStatus() {
+            if (!publicKey || !pool) {
+                // log('Cannot check subscription status - no key or pool', 'warning');
+                return;
+            }
+            
+            // log('Checking subscription status...', 'info');
+            
+            try {
+                // Query for the user's subscription events (kinds 3081 and 3082)
+                // 3081 = subscription upsert, 3082 = subscription delete
+                const events = await pool.querySync([relayUrl], {
+                    authors: [publicKey],
+                    kinds: [3081, 3082],
+                    limit: 10
+                });
+                
+                if (events.length === 0) {
+                    // log('No subscription events found', 'info');
+                    updateSubUI(false);
+                    return;
+                }
+                
+                // Sort by created_at to get the most recent event
+                events.sort((a, b) => b.created_at - a.created_at);
+                const latestEvent = events[0];
+                
+                // Kind 3081 = subscribe, Kind 3082 = unsubscribe
+                const isSubscribed = latestEvent.kind === 3081;
+                
+                // log(`Latest subscription event: kind ${latestEvent.kind} at ${new Date(latestEvent.created_at * 1000).toLocaleString()}`, 'info');
+                
+                if (isSubscribed) {
+                    // Check what filters they're subscribed to
+                    const filterTag = latestEvent.tags.find(tag => tag[0] === 'filter');
+                    if (filterTag) {
+                        log(`Subscribed with filter: ${filterTag[1]}`, 'info');
+                    }
+                }
+                
+                updateSubUI(isSubscribed);
+                
+            } catch (error) {
+                // log(`Error checking subscription status: ${error.message}`, 'error');
+            }
+        }
+
+        function updateSubUI(subscribed) {
+            const badge = document.getElementById('subStatus');
+            const subscribeBtn = document.getElementById('subscribe');
+            const unsubscribeBtn = document.getElementById('unsubscribe');
+            
+            if (subscribed) {
+                badge.textContent = 'Subscribed';
+                badge.className = 'status-badge active';
+                // When subscribed, disable subscribe button and enable unsubscribe
+                if (isRegistered) {
+                    subscribeBtn.disabled = true;
+                    unsubscribeBtn.disabled = false;
+                }
+            } else {
+                badge.textContent = 'Not Subscribed';
+                badge.className = 'status-badge inactive';
+                // When not subscribed, enable subscribe button and disable unsubscribe
+                if (isRegistered) {
+                    subscribeBtn.disabled = false;
+                    unsubscribeBtn.disabled = true;
+                }
+            }
+        }
+
+        async function updateServiceWorkerCount() {
+            if (!('serviceWorker' in navigator)) return;
+            const [reg1, regs] = await Promise.all([
+                navigator.serviceWorker.getRegistration('/'),
+                navigator.serviceWorker.getRegistrations?.() ?? Promise.resolve([])
+            ]);
+            const unique = new Set(regs.map(r => r.scope));
+            if (reg1) unique.add(reg1.scope);
+            document.getElementById('swCount').textContent = String(unique.size);
+                
+                // Log details about each registration if there are multiple
+                if (unique.size > 1) {
+                    log(`WARNING: ${unique.size} service workers registered!`, 'warning');
+                    regs.forEach((reg, index) => {
+                        log(`SW ${index + 1}: scope=${reg.scope}, state=${reg.active?.state || 'no active worker'}`, 'warning');
+                    });
+                    
+                    // Clean up duplicates - keep only the one with scope '/'
+                    const mainReg = regs.find(r => r.scope.endsWith('/'));
+                    for (const reg of regs) {
+                        if (reg !== mainReg) {
+                            log(`Unregistering duplicate SW with scope: ${reg.scope}`, 'info');
+                            reg.unregister().then(() => {
+                                log(`Unregistered SW with scope: ${reg.scope}`, 'success');
+                                updateServiceWorkerCount(); // Update count after cleanup
+                            }).catch(err => {
+                                log(`Failed to unregister SW: ${err.message}`, 'error');
+                            });
+                        }
+                    }
+                }
+            }
+
+        function log(message, type = 'info') {
+            const time = new Date().toLocaleTimeString('en-US', { 
+                hour12: false, 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit' 
+            });
+            
+            const logs = document.getElementById('logs');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${time}] ${message}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
+            
+            // Keep only last 50 entries
+            while (logs.children.length > 50) {
+                logs.removeChild(logs.firstChild);
+            }
+        }
+        
+        // Receive logs from the Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', (e) => {
+                const msg = e.data;
+                if (!msg || !msg.__SW_LOG__) return;
+                log(`[SW] ${msg.level}: ${msg.text}`, msg.level === 'error' ? 'error' : 'info');
+            });
+        }
+    </script>
+</body>
+</html>

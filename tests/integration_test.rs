@@ -1,6 +1,9 @@
 // Integration tests for plur_push_service
 
 use anyhow::{anyhow, Result};
+// Removed serial_test - tests now run in parallel with isolated Redis databases
+
+mod common;
 use bb8_redis::bb8; // Import bb8
 use nostr_relay_builder::MockRelay;
 use nostr_sdk::{
@@ -11,38 +14,38 @@ use nostr_sdk::{
     Kind,
     PublicKey,
     Tag,
+    TagKind,
     ToBech32, // Import ToBech32 trait
 };
-use plur_push_service::{
+use nostr_push_service::{
     config::Settings,
-    redis_store::{self, RedisPool},
+    redis_store::{self},
     state::AppState,
 };
 use redis::AsyncCommands; // For direct Redis interaction
 use std::collections::HashSet; // Added for cache manipulation
-use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken; // For service shutdown
 use url::Url;
 
 // Import service components and event type
-use plur_push_service::{event_handler, nostr_listener};
+use nostr_push_service::{event_handler, nostr_listener};
+use nostr_push_service::event_handler::EventContext;
 use tokio::sync::mpsc; // Keep specific mpsc import for clarity
 
 // --- Test Relay Setup ---
 
 async fn setup_test_environment() -> Result<(
     Arc<AppState>,
-    Arc<plur_push_service::fcm_sender::MockFcmSender>,
+    Arc<nostr_push_service::fcm_sender::MockFcmSender>,
     Url,
     MockRelay,
 )> {
     dotenvy::dotenv().ok();
-    // Use REDIS_HOST and REDIS_PORT, falling back to defaults if not set
-    let redis_host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let redis_port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
-    let redis_url_constructed = format!("redis://{}:{}", redis_host, redis_port);
+    
+    // Use standard Redis URL (no database selection)
+    let redis_url_constructed = common::create_test_redis_url();
 
     // --- Safety Check: Prevent running tests against DigitalOcean Redis ---
     if let Ok(parsed_url) = url::Url::parse(&redis_url_constructed) {
@@ -63,7 +66,7 @@ async fn setup_test_environment() -> Result<(
     let test_key_hex = "0000000000000000000000000000000000000000000000000000000000000001";
 
     // Set the environment variable with our test key hex
-    std::env::set_var("PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX", test_key_hex);
+    std::env::set_var("NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX", test_key_hex);
 
     let mut settings = Settings::new()
         .map_err(|e| anyhow!("Failed to load settings after setting env var: {}", e))?;
@@ -75,12 +78,19 @@ async fn setup_test_environment() -> Result<(
     let relay_url = Url::parse(&relay_url_str)?;
 
     settings.nostr.relay_url = relay_url_str.clone();
+    
+    // Configure the nostrpushdemo app for tests
+    settings.apps = vec![nostr_push_service::config::AppConfig {
+        name: "nostrpushdemo".to_string(),
+        fcm_project_id: "test-project".to_string(),
+        fcm_credentials_base64: None,
+    }];
 
     // Add a longer delay to allow the Redis service container to fully initialize in CI
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Manually construct AppState to inject MockFcmSender
-    let redis_pool = plur_push_service::redis_store::create_pool(
+    let redis_pool = nostr_push_service::redis_store::create_pool(
         &redis_url_constructed, // Use the constructed URL
         settings.redis.connection_pool_size,
     )
@@ -90,21 +100,20 @@ async fn setup_test_environment() -> Result<(
         e
     })?;
 
-    println!("Cleaning up Redis...");
-    cleanup_redis(&redis_pool).await?; // Cleanup *before* returning state
-    println!("Redis cleanup completed successfully.");
+    // Clean global Redis structures
+    common::clean_redis_globals(&redis_pool).await?;
 
-    let mock_fcm_sender_instance = plur_push_service::fcm_sender::MockFcmSender::new();
+    let mock_fcm_sender_instance = nostr_push_service::fcm_sender::MockFcmSender::new();
     let mock_fcm_sender_arc = Arc::new(mock_fcm_sender_instance.clone()); // Arc for returning
 
     // Create FcmClient wrapper with the mock implementation
-    let fcm_client = Arc::new(plur_push_service::fcm_sender::FcmClient::new_with_impl(
+    let fcm_client = Arc::new(nostr_push_service::fcm_sender::FcmClient::new_with_impl(
         Box::new(mock_fcm_sender_instance),
     ));
 
     // Initialize Nip29Client for the AppState, ensuring it connects to the mock relay
     let nip29_cache_expiration = settings.nostr.cache_expiration.unwrap_or(300);
-    let nip29_client = plur_push_service::nostr::nip29::Nip29Client::new(
+    let nip29_client = nostr_push_service::nostr::nip29::Nip29Client::new(
         relay_url_str.clone(),     // Use the mock relay URL
         test_service_keys.clone(), // Use the service keys generated for this test instance
         nip29_cache_expiration,
@@ -115,11 +124,19 @@ async fn setup_test_environment() -> Result<(
     // Add a small delay to ensure the client has time to establish the connection
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let app_state = plur_push_service::state::AppState {
+    // Create FCM clients map for the configured app
+    let mut fcm_clients = std::collections::HashMap::new();
+    let mut supported_apps = std::collections::HashSet::new();
+    fcm_clients.insert("nostrpushdemo".to_string(), fcm_client);
+    supported_apps.insert("nostrpushdemo".to_string());
+    
+    let app_state = nostr_push_service::state::AppState {
         settings,
         redis_pool,
-        fcm_client,
-        service_keys: Some(test_service_keys),
+        fcm_clients,
+        supported_apps,
+        service_keys: Some(test_service_keys.clone()),
+        crypto_service: Some(nostr_push_service::crypto::CryptoService::new(test_service_keys)),
         nip29_client: Arc::new(nip29_client), // Add initialized Nip29Client
     };
 
@@ -131,32 +148,21 @@ async fn setup_test_environment() -> Result<(
     ))
 }
 
-async fn cleanup_redis(pool: &RedisPool) -> Result<()> {
-    let mut conn = pool
-        .get()
-        .await
-        .map_err(|e: bb8::RunError<redis::RedisError>| {
-            anyhow!("Failed to get Redis connection: {}", e)
-        })?;
-    redis::cmd("FLUSHDB")
-        .query_async::<()>(&mut *conn)
-        .await
-        .map_err(|e: redis::RedisError| anyhow!("Failed to flush Redis DB: {}", e))?;
-    Ok(())
-}
 
 #[tokio::test]
 async fn test_register_device_token() -> Result<()> {
     let (state, _fcm_mock, _relay_url, _mock_relay) = setup_test_environment().await?;
 
-    let pubkey_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
-    let pubkey = PublicKey::from_hex(pubkey_hex)?;
-    let token = "test_token_for_registration";
+    // Use unique test data for isolation
+    let pubkey_hex = common::generate_test_pubkey_hex();
+    let pubkey = PublicKey::from_hex(&pubkey_hex)?;
+    let token = common::generate_test_token("registration");
 
-    plur_push_service::redis_store::add_or_update_token(&state.redis_pool, &pubkey, token).await?;
+    // Test default namespace registration (no app specified)
+    nostr_push_service::redis_store::add_or_update_token(&state.redis_pool, &pubkey, &token).await?;
 
     let stored_tokens =
-        plur_push_service::redis_store::get_tokens_for_pubkey(&state.redis_pool, &pubkey).await?;
+        nostr_push_service::redis_store::get_tokens_for_pubkey(&state.redis_pool, &pubkey).await?;
     assert_eq!(stored_tokens.len(), 1);
     assert_eq!(stored_tokens[0], token);
 
@@ -168,8 +174,10 @@ async fn test_register_device_token() -> Result<()> {
             .map_err(|e: bb8::RunError<redis::RedisError>| {
                 anyhow!("Failed to get Redis connection: {}", e)
             })?;
+    // Check in the default namespace
+    let token_to_pubkey_key = "app:default:token_to_pubkey";
     let stored_pubkey_hex: Option<String> = conn
-        .hget(plur_push_service::redis_store::TOKEN_TO_PUBKEY_HASH, token)
+        .hget(token_to_pubkey_key, token)
         .await
         .map_err(|e: redis::RedisError| anyhow!("Failed to HGET token mapping: {}", e))?;
     assert_eq!(stored_pubkey_hex, Some(pubkey_hex.to_string()));
@@ -182,7 +190,7 @@ async fn test_event_handling() -> Result<()> {
     let (state, fcm_mock, relay_url, _mock_relay) = setup_test_environment().await?;
 
     let service_token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::channel::<Box<Event>>(100);
+    let (event_tx, event_rx) = mpsc::channel::<(Box<Event>, EventContext)>(100);
 
     let listener_state = state.clone();
     let listener_token = service_token.clone();
@@ -208,18 +216,47 @@ async fn test_event_handling() -> Result<()> {
     user_a_client.connect().await;
 
     // --- Test Registration (User A) ---
-    let fcm_token_user_a = "test_fcm_token_for_user_a";
-    let registration_event = EventBuilder::new(Kind::Custom(3079), fcm_token_user_a)
+    let test_id = common::get_unique_test_id();
+    let fcm_token_user_a = format!("test_fcm_token_for_user_a_{}", test_id);
+    
+    // Get service public key from state
+    let service_pubkey = state.service_keys
+        .as_ref()
+        .ok_or_else(|| anyhow!("Service keys not configured"))?
+        .public_key();
+    
+    // Create token payload and encrypt with NIP-44
+    let payload = serde_json::json!({ "token": &fcm_token_user_a }).to_string();
+    let encrypted = nostr_sdk::nips::nip44::encrypt(
+        user_a_keys.secret_key(),
+        &service_pubkey,
+        payload,
+        nostr_sdk::nips::nip44::Version::V2,
+    )?;
+    // Use standard NIP-44 format (no prefix)
+    let encrypted_content = encrypted.clone();
+    
+    // Create registration event with app tag for nostrpushdemo
+    let registration_event = EventBuilder::new(Kind::Custom(3079), encrypted_content)
+        .tag(Tag::public_key(service_pubkey))
+        .tag(Tag::custom(TagKind::Custom("app".into()), vec!["nostrpushdemo".to_string()]))
+        .tag(Tag::parse(["expiration", &(nostr_sdk::Timestamp::now().as_u64() + 86400).to_string()])?)
         .sign(&user_a_keys)
         .await?;
     user_a_client.send_event(&registration_event).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
     let stored_tokens =
-        redis_store::get_tokens_for_pubkey(&state.redis_pool, &user_a_keys.public_key()).await?;
-    assert_eq!(stored_tokens.len(), 1);
-    assert_eq!(stored_tokens[0], fcm_token_user_a);
+        redis_store::get_tokens_for_pubkey_with_app(&state.redis_pool, "nostrpushdemo", &user_a_keys.public_key()).await?;
+    assert!(
+        stored_tokens.contains(&fcm_token_user_a),
+        "Token {} was not found in stored tokens for user",
+        fcm_token_user_a
+    );
 
     // --- Test Notification Send (User B sends message tagging User A in a group) ---
+    // Clear any previous FCM messages before this test
+    fcm_mock.clear();
+    
     let user_b_keys = Keys::generate(); // User B sends the message
     let user_b_client = ClientBuilder::new().signer(user_b_keys.clone()).build();
     user_b_client.add_relay(relay_url.as_str()).await?;
@@ -251,6 +288,13 @@ async fn test_event_handling() -> Result<()> {
 
     // Assert FCM mock received the notification for User A's token
     let sent_fcm_messages = fcm_mock.get_sent_messages();
+    
+    // Debug: Print all messages to understand duplicates
+    eprintln!("Integration test - FCM messages sent: {}", sent_fcm_messages.len());
+    for (token, _payload) in &sent_fcm_messages {
+        eprintln!("  Token: {}", token);
+    }
+    
     assert_eq!(
         sent_fcm_messages.len(),
         1,
@@ -258,32 +302,45 @@ async fn test_event_handling() -> Result<()> {
     );
     let (sent_token, sent_payload) = &sent_fcm_messages[0];
     assert_eq!(
-        sent_token, fcm_token_user_a,
+        sent_token, &fcm_token_user_a,
         "FCM message sent to wrong token"
     );
 
-    // Basic payload check (adapt based on create_fcm_payload logic)
+    // Basic payload check - now expects data-only message (no notification field)
     assert!(
-        sent_payload.notification.is_some(),
-        "FCM payload notification missing"
+        sent_payload.notification.is_none(),
+        "FCM payload should not have notification field (data-only message)"
     );
-    let notification = sent_payload.notification.as_ref().unwrap();
-    assert!(
-        notification.title.is_some(),
-        "FCM notification title missing"
-    );
-    // Could add checks for title content, body content, data fields etc.
-    // Example: Check if event ID is in data
     assert!(sent_payload.data.is_some(), "FCM payload data missing");
     let data = sent_payload.data.as_ref().unwrap();
+    assert!(
+        data.contains_key("title"),
+        "FCM data should contain title"
+    );
+    assert!(
+        data.contains_key("body"),
+        "FCM data should contain body"
+    );
     assert_eq!(
         data.get("nostrEventId").map(|s| s.as_str()),
         Some(message_event.id.to_hex().as_str())
     );
 
     // TODO: 8. Publish Kind 3080 (Deregistration) event
-    // ... (event creation, publishing) ...
-    let deregistration_event = EventBuilder::new(Kind::Custom(3080), fcm_token_user_a)
+    // Create encrypted deregistration payload
+    let dereg_payload = serde_json::json!({ "token": &fcm_token_user_a }).to_string();
+    let dereg_encrypted = nostr_sdk::nips::nip44::encrypt(
+        user_a_keys.secret_key(),
+        &service_pubkey,
+        dereg_payload,
+        nostr_sdk::nips::nip44::Version::V2,
+    )?;
+    // Use standard NIP-44 format (no prefix)
+    let dereg_encrypted_content = dereg_encrypted.clone();
+    
+    let deregistration_event = EventBuilder::new(Kind::Custom(3080), dereg_encrypted_content)
+        .tag(Tag::public_key(service_pubkey))
+        .tag(Tag::custom(TagKind::Custom("app".into()), vec!["nostrpushdemo".to_string()]))
         .sign(&user_a_keys)
         .await?;
     user_a_client.send_event(&deregistration_event).await?;

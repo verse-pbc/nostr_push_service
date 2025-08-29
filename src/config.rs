@@ -8,7 +8,7 @@ pub struct Settings {
     pub nostr: NostrSettings,
     pub service: ServiceSettings,
     pub redis: RedisSettings,
-    pub fcm: FcmSettings,
+    pub apps: Vec<AppConfig>,
     pub cleanup: CleanupSettings,
     #[serde(default = "default_server_settings")]
     pub server: ServerSettings,
@@ -34,6 +34,15 @@ pub struct RedisSettings {
     pub connection_pool_size: u32,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct AppConfig {
+    pub name: String,
+    pub fcm_project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fcm_credentials_base64: Option<String>,
+}
+
+// Keep FcmSettings for backward compatibility with FcmClient
 #[derive(Debug, Deserialize, Clone)]
 pub struct FcmSettings {
     pub project_id: String,
@@ -69,16 +78,16 @@ impl Settings {
 
         let s = config::Config::builder()
             .add_source(config::File::from(config_path).required(true))
-            // Eg.. `PLUR_PUSH__REDIS__URL=redis://...` would override `redis.url`
-            .add_source(config::Environment::with_prefix("PLUR_PUSH").separator("__"))
+            // Eg.. `NOSTR_PUSH__REDIS__URL=redis://...` would override `redis.url`
+            .add_source(config::Environment::with_prefix("NOSTR_PUSH").separator("__"))
             .build()?;
 
         s.try_deserialize()
     }
 
-    // Helper method to get service keys
+    // Helper method to get service keys (for relay auth and NIP-44 encryption)
     pub fn get_service_keys(&self) -> Option<nostr_sdk::Keys> {
-        // It will be overridden by PLUR_PUSH__SERVICE__PRIVATE_KEY_HEX if set.
+        // It will be overridden by NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX if set.
         let key_hex = self.service.private_key_hex.as_deref()?;
         let secret_key = nostr_sdk::SecretKey::from_hex(key_hex).ok()?;
         Some(nostr_sdk::Keys::new(secret_key))

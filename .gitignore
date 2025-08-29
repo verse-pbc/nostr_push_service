@@ -1,4 +1,23 @@
 /target
 /secrets/
 /local/
+/.claude/
 dump.rdb
+.env.local
+firebase-service-account.json
+firebase-service-account-*.json
+serviceAccountKey.json
+
+# Development artifacts
+*.log
+test_results.txt
+dm_event.json
+prompt-plan.md
+frontend/index_old.html
+frontend/*test*.png
+frontend/*initial*.png
+frontend/*fixed*.png
+frontend/ngrok-*.png
+
+# Documentation and unused files
+CHANGELOG.md

@@ -35,14 +35,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v3.2.0
-        with:
-          versionSpec: "6.2.x"
-
       - name: Determine Version
         id: get-version
-        uses: gittools/actions/gitversion/execute@v3.2.0
+        run: |
+          # Use timestamp and short SHA for unique versioning
+          # Format: 0.1.YYYYMMDD-HHMM-SHA
+          TIMESTAMP=$(date -u +"%Y%m%d-%H%M")
+          SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)
+          VERSION="0.1.${TIMESTAMP}-${SHORT_SHA}"
+          echo "SemVer=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Generated version: ${VERSION}"
 
       - name: Output Version
         run: |
@@ -103,6 +105,7 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           RUST_BACKTRACE: 1
+          # Tests now use unique data for isolation, so parallel execution is safe
         run: cargo test --verbose
 
   push_to_registry:
@@ -156,6 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
 
       - name: Check Out the Repo
@@ -170,20 +174,22 @@ jobs:
           git config --global user.email "ci@verse.app"
           git checkout release
           git merge -Xtheirs --no-commit origin/main
+          # Reset workflow files to avoid permission issues
+          git reset HEAD .github/workflows/
+          git checkout -- .github/workflows/
 
       - name: Apply Newest Version
         shell: bash
         run: |
           echo "Image tag being patched to manifests:"
           echo ${{ needs.get_version.outputs.SemVer }}
-          yq -i '.version = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/plur-push/Chart.yaml
-          yq -i '.appVersion = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/plur-push/Chart.yaml
-          yq -i '.image.tag = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/plur-push/values.yaml
+          yq -i '.version = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/nostr-push/Chart.yaml
+          yq -i '.appVersion = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/nostr-push/Chart.yaml
+          yq -i '.image.tag = "${{ needs.get_version.outputs.SemVer }}"' ./deployment/nostr-push/values.yaml
 
       - name: Commit and Push to Trigger Release
         shell: bash
         run: |
-          git tag ${{ needs.get_version.outputs.SemVer }}
-          git commit -a -m "Version ${{ needs.get_version.outputs.SemVer }} Release"
+          git add ./deployment/nostr-push/Chart.yaml ./deployment/nostr-push/values.yaml
+          git commit -m "Deploy version ${{ needs.get_version.outputs.SemVer }}"
           git push
-          git push --tags

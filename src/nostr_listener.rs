@@ -1,5 +1,6 @@
 use crate::{
     error::{Result, ServiceError},
+    event_handler::EventContext,
     state::AppState,
 };
 use nostr_sdk::prelude::*;
@@ -11,7 +12,7 @@ use tracing::{debug, error, info, warn};
 
 pub async fn run(
     state: Arc<AppState>,
-    event_tx: Sender<Box<Event>>,
+    event_tx: Sender<(Box<Event>, EventContext)>,
     token: CancellationToken,
 ) -> Result<()> {
     info!("Starting Nostr listener...");
@@ -19,7 +20,9 @@ pub async fn run(
     let service_keys = state
         .service_keys
         .clone()
-        .ok_or_else(|| ServiceError::Internal("Nostr service keys not configured".to_string()))?;
+        .ok_or_else(|| {
+            ServiceError::Internal("Nostr service keys not configured".to_string())
+        })?;
     let service_pubkey = service_keys.public_key();
 
     // Get the shared Nostr client from AppState (via Nip29Client)
@@ -66,13 +69,16 @@ pub async fn run(
             }
         })
         .collect::<Vec<_>>();
+    
 
     let historical_filter = Filter::new()
         .kinds(historical_kinds.clone())
         .since(since_timestamp);
 
     info!(since = %since_timestamp, "Querying historical events...");
-    let now = Timestamp::now();
+    // For live subscription, look back 3 days to catch NIP-17 DMs with randomized timestamps
+    // NIP-17 randomizes timestamps up to 2 days in the past for privacy
+    let subscription_since = Timestamp::now() - Duration::from_secs(3 * 24 * 60 * 60);
 
     tokio::select! {
         biased;
@@ -105,7 +111,7 @@ pub async fn run(
                                          info!("Nostr listener cancelled while sending historical event {}.", event_id);
                                          Err(ServiceError::Cancelled)
                                      }
-                                     send_res = event_tx.send(Box::new(event)) => {
+                                     send_res = event_tx.send((Box::new(event), EventContext::Historical)) => {
                                          if let Err(e) = send_res {
                                              error!(error = %e, event_id = %event_id, "Failed to send historical event to handler task");
                                              error!("Event handler channel likely closed, stopping historical processing.");
@@ -113,6 +119,7 @@ pub async fn run(
                                                  "Event handler channel closed during historical processing: {}", e
                                              )))
                                          } else {
+                                            debug!(event_id = %event_id, "Sent historical event to handler");
                                             Ok(())
                                          }
                                      }
@@ -141,7 +148,10 @@ pub async fn run(
     }
 
     info!("Subscribing to live events...");
-    let live_filter = Filter::new().kinds(historical_kinds).since(now);
+    // Use the timestamp from before historical fetch to avoid missing events
+    let live_filter = Filter::new().kinds(historical_kinds.clone()).since(subscription_since);
+    info!("Live filter: kinds={:?}, since={} (3 days ago for NIP-17 compatibility)", 
+          historical_kinds, subscription_since);
 
     tokio::select! {
         biased;
@@ -169,11 +179,12 @@ pub async fn run(
              }
 
             res = notifications.recv() => {
-                 match res {
+                  match res {
                     Ok(notification) => {
                         match notification {
                             nostr_sdk::RelayPoolNotification::Event { event, .. } => {
                                 if event.pubkey == service_pubkey {
+                                    debug!("Skipping event from service account");
                                     continue;
                                 }
                                 let event_id = event.id;
@@ -187,7 +198,7 @@ pub async fn run(
                                         info!("Nostr listener cancelled while attempting to send live event {}.", event_id);
                                         break;
                                     }
-                                    send_res = event_tx.send(event) => {
+                                    send_res = event_tx.send((event, EventContext::Live)) => {
                                         if let Err(e) = send_res {
                                             tracing::error!(
                                                 "Failed to send event {} to handler channel: {}",

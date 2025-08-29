@@ -6,6 +6,7 @@ use firebase_messaging_rs::{
 };
 // Removed unused import
 // use serde_json;
+use base64;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, time::Duration};
 use thiserror::Error;
@@ -42,18 +43,41 @@ impl From<FirebaseFCMError> for FcmError {
             }
             FirebaseFCMError::Unauthorized(reason) => FcmError::Unauthorized(reason),
             FirebaseFCMError::InvalidRequestDescriptive { reason } => {
-                if reason.contains("invalid registration token")
-                    || reason.contains("BadDeviceToken")
-                    || reason.to_lowercase().contains("unregistered")
-                    || reason.to_lowercase().contains("not registered")
+                // Try to parse FCM's JSON error response
+                let error_message = if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&reason) {
+                    // Extract the error message from FCM's JSON structure
+                    json_value.get("error")
+                        .and_then(|e| e.get("message"))
+                        .and_then(|m| m.as_str())
+                        .unwrap_or(&reason)
+                        .to_string()
+                } else {
+                    // If not JSON, use the raw reason
+                    reason.clone()
+                };
+                
+                // Check for specific error conditions
+                if error_message.contains("invalid registration token")
+                    || error_message.contains("registration token is not a valid FCM registration token")
+                    || error_message.contains("BadDeviceToken")
+                    || error_message.to_lowercase().contains("unregistered")
+                    || error_message.to_lowercase().contains("not registered")
                 {
                     FcmError::TokenNotRegistered
+                } else if error_message.contains("SENDER_ID_MISMATCH") 
+                    || error_message.contains("sender id mismatch")
+                    || error_message.contains("project") && error_message.contains("mismatch")
+                {
+                    // Special handling for project mismatch
+                    FcmError::InvalidRequest(format!("Project mismatch: {}", error_message))
                 } else {
-                    FcmError::InvalidRequest(reason)
+                    // Log the full JSON for debugging
+                    tracing::debug!("FCM error response: {}", reason);
+                    FcmError::InvalidRequest(error_message)
                 }
             }
             FirebaseFCMError::InvalidRequest => {
-                FcmError::InvalidRequest("Unknown invalid request".to_string())
+                FcmError::InvalidRequest("Unknown invalid request (no details provided)".to_string())
             }
             FirebaseFCMError::RetryableInternal { retry_after } => {
                 FcmError::RetryableInternal(retry_after)
@@ -80,19 +104,20 @@ struct RealFcmClient {
 }
 
 impl RealFcmClient {
-    fn new() -> Result<Self, FcmError> {
-        // Note: Project ID logic moved to AppState initialization or configuration loading
-        // to avoid env var side effects here and ensure it's set before calling this.
-
+    fn new(project_id: &str) -> Result<Self, FcmError> {
+        // Use new_with_project to specify the project ID explicitly
+        // This allows multiple FCM clients with different projects
+        let project_id_owned = project_id.to_string();
+        
         let client_result = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-            rt.block_on(async { FirebaseClient::new().await })
+            rt.block_on(async { FirebaseClient::new_with_project(&project_id_owned).await })
         })
         .join()
         .expect("Tokio runtime thread panicked");
 
         let client = client_result.map_err(|e| {
-            FcmError::Initialization(format!("Failed to initialize FirebaseClient: {}", e))
+            FcmError::Initialization(format!("Failed to initialize FirebaseClient for project {}: {}", project_id, e))
         })?;
 
         Ok(RealFcmClient { client })
@@ -107,17 +132,17 @@ impl FcmSend for RealFcmClient {
         token: &str,
         payload: FcmPayload,
     ) -> std::result::Result<(), FcmError> {
-        let notif = payload.notification.ok_or_else(|| {
-            FcmError::InvalidRequest("Missing notification field in FcmPayload".to_string())
-        })?; // Handle potential None case
+        // Support both notification+data and data-only messages
+        let notification = payload.notification.map(|notif| Notification {
+            title: notif.title,
+            body: notif.body,
+            image: None,
+        });
+        
         let message = Message::Token {
             token: token.to_string(),
             name: None,
-            notification: Some(Notification {
-                title: notif.title,
-                body: notif.body,
-                image: None,
-            }),
+            notification,  // Can be None for data-only messages
             data: payload.data,
             android: None,
             apns: None,
@@ -139,9 +164,16 @@ impl FcmSend for RealFcmClient {
                 Ok(())
             }
             Err(firebase_err) => {
+                // Log the raw Firebase error for debugging
+                tracing::debug!(
+                    "FCM raw error for token prefix {}: {:?}",
+                    &token[..std::cmp::min(token.len(), 8)],
+                    firebase_err
+                );
+                
                 let custom_error = FcmError::from(firebase_err);
                 tracing::error!(
-                    "FCM send failed for token prefix {}: {:?}",
+                    "FCM send failed for token prefix {}: {}",
                     &token[..std::cmp::min(token.len(), 8)],
                     custom_error
                 );
@@ -160,26 +192,42 @@ pub struct FcmClient {
 impl FcmClient {
     // Updated new to initialize with the RealFcmClient implementation
     pub fn new(settings: &FcmSettings) -> Result<Self, FcmError> {
-        // Important: GOOGLE_CLOUD_PROJECT env var handling moved.
-        // Ensure it's set appropriately *before* calling this function,
-        // likely during application startup/config loading.
-        if std::env::var("GOOGLE_CLOUD_PROJECT").is_err() {
-            if !settings.project_id.is_empty() {
-                tracing::debug!(
-                    "Setting GOOGLE_CLOUD_PROJECT env var to: {}",
-                    &settings.project_id
-                );
-                std::env::set_var("GOOGLE_CLOUD_PROJECT", &settings.project_id);
-            } else {
-                tracing::warn!(
-                     "GOOGLE_CLOUD_PROJECT env var not set and FcmSettings.project_id is empty. FCM initialization might fail."
-                 );
+        // Handle credentials from base64 environment variable
+        if let Ok(credentials_base64) = std::env::var("NOSTR_PUSH__FCM__CREDENTIALS_BASE64") {
+            if !credentials_base64.is_empty() {
+                // Decode base64 credentials
+                use base64::Engine;
+                match base64::engine::general_purpose::STANDARD.decode(&credentials_base64) {
+                    Ok(credentials_json) => {
+                        // Write to a temporary file
+                        let temp_dir = std::env::temp_dir();
+                        let creds_path = temp_dir.join("firebase-service-account.json");
+                        
+                        match std::fs::write(&creds_path, credentials_json) {
+                            Ok(_) => {
+                                tracing::info!("Wrote Firebase credentials to temporary file: {:?}", creds_path);
+                                // Set GOOGLE_APPLICATION_CREDENTIALS to the temp file path
+                                std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", creds_path.to_str().unwrap());
+                                tracing::info!("Set GOOGLE_APPLICATION_CREDENTIALS environment variable");
+                            },
+                            Err(e) => {
+                                tracing::error!("Failed to write Firebase credentials to temp file: {}", e);
+                                return Err(FcmError::Initialization(format!("Failed to write credentials: {}", e)));
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to decode base64 Firebase credentials: {}", e);
+                        return Err(FcmError::Initialization(format!("Failed to decode credentials: {}", e)));
+                    }
+                }
             }
-        } else {
-            tracing::debug!("GOOGLE_CLOUD_PROJECT env var already set.");
         }
-
-        let real_client = RealFcmClient::new()?;
+        
+        // Pass the project_id to RealFcmClient
+        // The library will use this instead of GOOGLE_CLOUD_PROJECT env var
+        let real_client = RealFcmClient::new(&settings.project_id)?;
+        tracing::info!("Initialized FCM client for project: {}", settings.project_id);
         Ok(FcmClient {
             client: Box::new(real_client),
         })

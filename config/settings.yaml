@@ -9,10 +9,14 @@ service:
   # Better to load from env var or secrets manager
   # service_private_key_hex: "service_private_key_hex_here"
   listen_kinds: # Kinds to subscribe to
+    - 9    # Deletion events (for testing)
     - 11
     - 12
+    - 1059
     - 3079
     - 3080
+    - 3081
+    - 3082
   process_window_days: 7 # How far back to look for missed events on startup
   processed_event_ttl_secs: 604800 # 7 days TTL for processed event IDs
 
@@ -20,9 +24,10 @@ redis:
   url: "redis://127.0.0.1:6379" # Default URL, overridden by REDIS_URL env var if set
   connection_pool_size: 10
 
-fcm:
-  project_id: "pub-verse-app"
-  api_endpoint: "https://fcm.googleapis.com" # Default v1 endpoint
+apps:
+  - name: "nostrpushdemo"
+    fcm_project_id: "plur-push-local"
+    # FCM credentials loaded from NOSTR_PUSH__APPS__0__FCM_CREDENTIALS_BASE64 env var
 
 cleanup:
   enabled: true

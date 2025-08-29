@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nostr-push-deployment
+  namespace: nostr-push
+  labels:
+    app.kubernetes.io/name: nostr-push
+    app.kubernetes.io/part-of: nostr-push
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nostr-push
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nostr-push
+        app.kubernetes.io/part-of: nostr-push
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      containers:
+        - name: my-container
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "Always" }}
+          env:
+            - name: RUST_LOG
+              value: INFO
+            - name: NOSTR_PUSH__NOSTR__RELAY_URL
+              value: wss://communities.nos.social
+            - name: NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: nostr-push-secret
+                  key: app-nip29-relay-private-key
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: nostr-push-secret
+                  key: redis-connection-string
+            # FCM credentials for first app (avoid NOSTR_PUSH prefix to prevent config parsing conflict)
+            - name: FCM_APPS__0__CREDENTIALS_PATH
+              value: /app/secrets/serviceAccountKey.json
+            # Firebase Web Configuration (from ConfigMap)
+            - name: FIREBASE_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_API_KEY
+            - name: FIREBASE_AUTH_DOMAIN
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_AUTH_DOMAIN
+            - name: FIREBASE_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_PROJECT_ID
+            - name: FIREBASE_STORAGE_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_STORAGE_BUCKET
+            - name: FIREBASE_MESSAGING_SENDER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_MESSAGING_SENDER_ID
+            - name: FIREBASE_APP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_APP_ID
+            - name: FIREBASE_VAPID_PUBLIC_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: firebase-web-config
+                  key: FIREBASE_VAPID_PUBLIC_KEY
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "0.5"
+            limits:
+              memory: "512Mi"
+              cpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            timeoutSeconds: 3
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+          volumeMounts:
+            - name: google-application-credentials
+              mountPath: /app/secrets
+      volumes:
+        - name: google-application-credentials
+          secret:
+            secretName: nostr-push-secret
+            items:
+              - key: google-application-credentials
+                path: serviceAccountKey.json
+
+
+                
