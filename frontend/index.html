@@ -163,6 +163,13 @@
             color: #764ba2;
         }
         
+        button.secondary:disabled {
+            background: transparent;
+            border: 1px solid #444;
+            color: #555;
+            cursor: not-allowed;
+        }
+        
         button.danger {
             background: linear-gradient(135deg, #f44336 0%, #e91e63 100%);
             color: white;
@@ -811,10 +818,9 @@
             // Count service workers
             updateServiceWorkerCount();
             
-            // Enable register button now that everything is initialized
+            // Log initialization status
             if (finalizeEvent && privateKey && publicKey && pool) {
-                document.getElementById('register').disabled = false;
-                log('Initialization complete - Register button enabled', 'success');
+                log('Initialization complete', 'success');
             } else {
                 log('Initialization incomplete - some components failed to load', 'warning');
             }
