@@ -9,14 +9,29 @@ service:
   # Better to load from env var or secrets manager
   # service_private_key_hex: "service_private_key_hex_here"
   listen_kinds: # Kinds to subscribe to
-    - 9    # Deletion events (for testing)
-    - 11
-    - 12
-    - 1059
-    - 3079
-    - 3080
-    - 3081
-    - 3082
+    # Push notification registration events
+    - 3079  # Push token registration
+    - 3080  # Push token deregistration
+    - 3081  # Notification filter upsert
+    - 3082  # Notification filter delete
+
+    # Universes-specific events to monitor
+    - 1111  # Comments/messages in communities (NIP-22)
+    - 4552  # Join requests (moderator notifications)
+    - 34551 # Approved members list updates
+    - 34552 # Declined members list updates
+    - 34553 # Banned members list updates
+
+    # Direct messages
+    - 4     # NIP-04 encrypted DMs (legacy)
+    - 1059  # NIP-44 gift-wrapped DMs
+
+    # Social interactions
+    - 7     # Reactions to posts
+    - 9735  # Zaps (optional, for future)
+
+    # Utility
+    - 9     # Deletion events
   process_window_days: 7 # How far back to look for missed events on startup
   processed_event_ttl_secs: 604800 # 7 days TTL for processed event IDs
 
@@ -27,7 +42,15 @@ redis:
 apps:
   - name: "nostrpushdemo"
     fcm_project_id: "plur-push-local"
-    # FCM credentials loaded from NOSTR_PUSH__APPS__0__FCM_CREDENTIALS_BASE64 env var
+    # K8s: /app/secrets/firebase-nostrpushdemo.json
+    # Local: ./firebase-service-account-nostrpushdemo.json
+    credentials_path: "/app/secrets/firebase-nostrpushdemo.json"
+
+  - name: "universes"
+    fcm_project_id: "universes-2bc44"
+    # K8s: /app/secrets/firebase-universes.json
+    # Local: ./firebase-service-account-universes.json
+    credentials_path: "/app/secrets/firebase-universes.json"
 
 cleanup:
   enabled: true

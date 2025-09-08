@@ -68,70 +68,33 @@ impl AppState {
         let mut fcm_clients = HashMap::new();
         let mut supported_apps = HashSet::new();
         
-        for (index, app_config) in settings.apps.iter().enumerate() {
-            // Try to set up credentials for this app
-            let credentials_set = 
-                // First try path-based credentials (for K8s deployments)
-                if let Ok(credentials_path) = env::var(&format!("FCM_APPS__{}__CREDENTIALS_PATH", index)) {
-                    if !credentials_path.is_empty() {
-                        // Set global env var that gcloud-sdk will read during FCM client initialization
-                        env::set_var("GOOGLE_APPLICATION_CREDENTIALS", &credentials_path);
-                        tracing::info!("Set credentials path for app {}: {}", app_config.name, credentials_path);
-                        true
-                    } else {
-                        false
-                    }
-                // Then try base64 credentials (for testing/local dev)
-                } else if let Ok(credentials_base64) = env::var(&format!("FCM_APPS__{}__CREDENTIALS_BASE64", index)) {
-                    if !credentials_base64.is_empty() {
-                        env::set_var("NOSTR_PUSH__FCM__CREDENTIALS_BASE64", credentials_base64);
-                        tracing::info!("Set base64 credentials for app {}", app_config.name);
-                        true
-                    } else {
-                        false
-                    }
-                // Fallback: try global credentials if this is the first app
-                } else if index == 0 {
-                    // Check if global credentials are already set
-                    if env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok() || 
-                       env::var("NOSTR_PUSH__FCM__CREDENTIALS_BASE64").is_ok() {
-                        tracing::info!("Using global credentials for app {}", app_config.name);
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+        for app_config in settings.apps.iter() {
+            // Determine credentials path - use config or fall back to local convention
+            let credentials_path = app_config.credentials_path
+                .as_ref()
+                .map(|p| p.clone())
+                .unwrap_or_else(|| format!("./firebase-service-account-{}.json", app_config.name));
             
-            if credentials_set {
-                // Create FCM client for this app with its specific project_id
-                let fcm_settings = crate::config::FcmSettings {
-                    project_id: app_config.fcm_project_id.clone(),
-                };
-                
-                match FcmClient::new(&fcm_settings) {
-                    Ok(client) => {
-                        fcm_clients.insert(app_config.name.clone(), Arc::new(client));
-                        supported_apps.insert(app_config.name.clone());
-                        tracing::info!("Initialized FCM client for app '{}' with project '{}'", 
-                                     app_config.name, app_config.fcm_project_id);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to initialize FCM client for app {}: {}", app_config.name, e);
-                    }
+            // Set GOOGLE_APPLICATION_CREDENTIALS for the library to use
+            env::set_var("GOOGLE_APPLICATION_CREDENTIALS", &credentials_path);
+            tracing::info!("Setting credentials path for app '{}': {}", app_config.name, credentials_path);
+            
+            // Create FCM client for this app with its specific project_id
+            let fcm_settings = crate::config::FcmSettings {
+                project_id: app_config.fcm_project_id.clone(),
+            };
+            
+            match FcmClient::new(&fcm_settings) {
+                Ok(client) => {
+                    fcm_clients.insert(app_config.name.clone(), Arc::new(client));
+                    supported_apps.insert(app_config.name.clone());
+                    tracing::info!("Initialized FCM client for app '{}' with project '{}'", 
+                                 app_config.name, app_config.fcm_project_id);
                 }
-                
-                // Clear app-specific env vars after initialization to prepare for next app
-                // This ensures the next app doesn't accidentally use the wrong credentials
-                // We only clear NOSTR_PUSH__FCM__CREDENTIALS_BASE64 since GOOGLE_APPLICATION_CREDENTIALS
-                // will be overwritten by the next app anyway
-                if index > 0 || env::var(&format!("FCM_APPS__{}__CREDENTIALS_PATH", index)).is_ok() ||
-                   env::var(&format!("FCM_APPS__{}__CREDENTIALS_BASE64", index)).is_ok() {
-                    env::remove_var("NOSTR_PUSH__FCM__CREDENTIALS_BASE64");
+                Err(e) => {
+                    tracing::error!("Failed to initialize FCM client for app {} (credentials: {}): {}", 
+                                  app_config.name, credentials_path, e);
                 }
-            } else {
-                tracing::warn!("No FCM credentials found for app {} (index {})", app_config.name, index);
             }
         }
         

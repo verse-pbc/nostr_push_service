@@ -65,7 +65,7 @@ async fn setup_broadcast_test_environment() -> Result<(
     settings.apps = vec![nostr_push_service::config::AppConfig {
         name: "nostrpushdemo".to_string(),
         fcm_project_id: "test-project".to_string(),
-        fcm_credentials_base64: None,
+        credentials_path: None,
     }];
 
     // Allow time for Redis to initialize

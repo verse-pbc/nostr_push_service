@@ -10,9 +10,16 @@ else
     exit 1
 fi
 
-# Check if service account file exists
-if [ ! -f "${FIREBASE_SERVICE_ACCOUNT_PATH:-firebase-service-account.json}" ]; then
+# Check if service account file exists - try app-specific names first
+if [ -f "firebase-service-account-nostrpushdemo.json" ]; then
+    FIREBASE_SERVICE_ACCOUNT_PATH="firebase-service-account-nostrpushdemo.json"
+    echo "✅ Using firebase-service-account-nostrpushdemo.json"
+elif [ -f "firebase-service-account.json" ]; then
+    FIREBASE_SERVICE_ACCOUNT_PATH="firebase-service-account.json"
+    echo "✅ Using firebase-service-account.json (legacy)"
+else
     echo "❌ Error: Firebase service account JSON not found!"
+    echo "Expected: firebase-service-account-nostrpushdemo.json"
     echo "Download it from Firebase Console → Project Settings → Service Accounts"
     exit 1
 fi
@@ -26,9 +33,6 @@ export FIREBASE_MESSAGING_SENDER_ID
 export FIREBASE_APP_ID
 
 echo "✅ Firebase configuration loaded and exported"
-
-# Convert service account JSON to base64
-CREDENTIALS_BASE64=$(base64 < "${FIREBASE_SERVICE_ACCOUNT_PATH}")
 
 # Start Redis if not running
 if ! pgrep redis-server > /dev/null; then
@@ -58,8 +62,8 @@ echo ""
 
 # Set environment variables and run the service
 export NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX=$SERVICE_PRIVATE_KEY
-export GOOGLE_CLOUD_PROJECT="${FIREBASE_PROJECT_ID}"
-export NOSTR_PUSH__FCM__CREDENTIALS_BASE64="$CREDENTIALS_BASE64"
+# Don't set NOSTR_PUSH__APPS__* as it conflicts with config structure
+# The app will auto-detect firebase-service-account-nostrpushdemo.json
 export REDIS_URL="redis://localhost:6379"
 export RUST_LOG="info"
 

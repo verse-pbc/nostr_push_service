@@ -39,7 +39,7 @@ pub struct AppConfig {
     pub name: String,
     pub fcm_project_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fcm_credentials_base64: Option<String>,
+    pub credentials_path: Option<String>,
 }
 
 // Keep FcmSettings for backward compatibility with FcmClient

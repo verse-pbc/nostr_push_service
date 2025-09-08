@@ -7,6 +7,7 @@ dump.rdb
 firebase-service-account.json
 firebase-service-account-*.json
 serviceAccountKey.json
+private-key.txt
 
 # Development artifacts
 *.log

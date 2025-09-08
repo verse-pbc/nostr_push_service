@@ -48,7 +48,7 @@ fn create_test_settings(service_private_hex: String) -> Settings {
         apps: vec![nostr_push_service::config::AppConfig {
             name: "nostrpushdemo".to_string(),
             fcm_project_id: "test-project".to_string(),
-            fcm_credentials_base64: None,
+            credentials_path: None,
         }],
         nostr: nostr_push_service::config::NostrSettings {
             relay_url: "wss://test.relay".to_string(),
@@ -354,12 +354,12 @@ async fn test_multi_app_namespace_isolation() {
         nostr_push_service::config::AppConfig {
             name: app1_name.to_string(),
             fcm_project_id: "test-project-1".to_string(),
-            fcm_credentials_base64: None,
+            credentials_path: None,
         },
         nostr_push_service::config::AppConfig {
             name: app2_name.to_string(),
             fcm_project_id: "test-project-2".to_string(),
-            fcm_credentials_base64: None,
+            credentials_path: None,
         },
     ];
     
