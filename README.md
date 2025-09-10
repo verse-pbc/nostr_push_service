@@ -30,9 +30,22 @@ All events must include a `p` tag with the service's public key and use NIP-44 e
 # Required
 NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX="<service_private_key>"  # For NIP-44 decryption
 REDIS_URL="redis://localhost:6379"                            # Token storage
+```
 
-# Firebase (for push delivery)
-GOOGLE_APPLICATION_CREDENTIALS="/path/to/firebase-service-account.json"
+#### Credential Configuration
+
+```bash
+# LOCAL DEVELOPMENT - Point to local files:
+export NOSTR_PUSH__APPS__NOSTRPUSHDEMO__CREDENTIALS_PATH="./firebase-service-account-nostrpushdemo.json"
+export NOSTR_PUSH__APPS__UNIVERSES__CREDENTIALS_PATH="./firebase-service-account-universes.json"
+
+# Or just place files with these exact names (auto-detection):
+# - firebase-service-account-nostrpushdemo.json
+# - firebase-service-account-universes.json
+
+# PRODUCTION (K8s) - Point to mounted secret files:
+export NOSTR_PUSH__APPS__NOSTRPUSHDEMO__CREDENTIALS_PATH="/app/secrets/firebase-nostrpushdemo.json"
+export NOSTR_PUSH__APPS__UNIVERSES__CREDENTIALS_PATH="/app/secrets/firebase-universes.json"
 ```
 
 ### Application Configuration
@@ -41,9 +54,14 @@ Configure supported apps in `config/settings.yaml`:
 
 ```yaml
 apps:
-  - name: "myapp"
-    fcm_project_id: "my-firebase-project"
+  - name: "nostrpushdemo"
+    fcm_project_id: "plur-push-local"
+    
+  - name: "universes"
+    fcm_project_id: "universes-push"  # Your Firebase project ID
 ```
+
+Each app needs its own Firebase service account. See `setup-credentials.sh` for configuration options.
 
 ## Running the Service
 

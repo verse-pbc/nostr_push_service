@@ -136,7 +136,7 @@ impl CryptoService {
         let payload: FilterUpsertPayload = serde_json::from_str(&decrypted)?;
         
         // Validate that filter is not empty
-        if payload.filter.is_null() || payload.filter.as_object().map_or(true, |obj| obj.is_empty()) {
+        if payload.filter.is_null() || payload.filter.as_object().is_none_or(|obj| obj.is_empty()) {
             return Err(CryptoError::InvalidToken("Filter cannot be empty".to_string()));
         }
         
@@ -151,7 +151,7 @@ impl CryptoService {
         let payload: FilterDeletePayload = serde_json::from_str(&decrypted)?;
         
         // Validate that filter is not empty
-        if payload.filter.is_null() || payload.filter.as_object().map_or(true, |obj| obj.is_empty()) {
+        if payload.filter.is_null() || payload.filter.as_object().is_none_or(|obj| obj.is_empty()) {
             return Err(CryptoError::InvalidToken("Filter cannot be empty".to_string()));
         }
         

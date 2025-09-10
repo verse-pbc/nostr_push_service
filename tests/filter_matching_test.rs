@@ -61,6 +61,14 @@ async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
     fcm_clients.insert("nostrpushdemo".to_string(), fcm_client);
     supported_apps.insert("nostrpushdemo".to_string());
     
+    let (subscription_manager, community_handler) = common::create_default_handlers();
+    
+    // Get the nostr client from nip29_client  
+    let nostr_client = nip29_client.client();
+    
+    // Initialize the shared user subscriptions map
+    let user_subscriptions = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    
     let state = Arc::new(AppState {
         settings,
         redis_pool,
@@ -69,6 +77,10 @@ async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
         service_keys: Some(test_keys.clone()),
         crypto_service: Some(nostr_push_service::crypto::CryptoService::new(test_keys)),
         nip29_client: Arc::new(nip29_client),
+        nostr_client,
+        user_subscriptions,
+        subscription_manager,
+        community_handler,
     });
     
     (state, mock_fcm)

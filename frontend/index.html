@@ -457,7 +457,8 @@
             <strong>Quick Test:</strong>
             <ol>
                 <li>Register for Push Notifications (3079)</li>
-                <li>Subscribe to kind 9 - optional, DMs work by default (3081)</li>
+                <li>Subscribe to Chat messages (3081) - required for receiving notifications</li>
+                <li>Subscribe to DM notifications (3081) - required for receiving DM push notifications</li>
                 <li>Open another browser and Send to Relay</li>
                 <li>You should receive a push notification!</li>
             </ol>
@@ -486,7 +487,7 @@
 
         <div class="grid">
             <div class="section">
-                <h2>💬 Kind 9 Subscriptions</h2>
+                <h2 id="chatSectionTitle">💬 Chat Subscriptions</h2>
                 <div style="display: flex; gap: 8px;">
                     <button id="subscribe" onclick="subscribeToChats()" disabled style="flex: 1;">Subscribe (3081)</button>
                     <button id="unsubscribe" onclick="unsubscribeFromChats()" disabled style="flex: 1;" class="secondary">Unsubscribe (3082)</button>
@@ -495,10 +496,19 @@
             </div>
             
             <div class="section">
+                <h2>💌 DM Subscriptions</h2>
+                <div style="display: flex; gap: 8px;">
+                    <button id="subscribeDM" onclick="subscribeToDMs()" disabled style="flex: 1;">Subscribe to DMs (3081)</button>
+                    <button id="unsubscribeDM" onclick="unsubscribeFromDMs()" disabled style="flex: 1;" class="secondary">Unsubscribe from DMs (3082)</button>
+                </div>
+                <span id="dmSubStatus" class="status-badge inactive">Not Subscribed</span>
+            </div>
+            
+            <div class="section">
                 <h2>✉️ Send Test</h2>
                 <textarea id="message" placeholder="Test message..."></textarea>
                 <div style="display: flex; gap: 8px;">
-                    <button onclick="sendTestMessage()" style="flex: 1;">Send kind 9</button>
+                    <button id="sendChatBtn" onclick="sendTestMessage()" style="flex: 1;">Send Chat</button>
                     <button onclick="sendDM()" style="flex: 1;">Send DM</button>
                 </div>
             </div>
@@ -540,8 +550,25 @@
         // Service configuration for NIP-44 encryption
         // This will be injected by the backend
         const SERVICE_NPUB = 'npub1mutnyacc9uc4t5mmxvpprwsauj5p2qxq95v4a9j0jxl8wnkfvuyqpq9mhx';
-        const APP_NAME = 'nostrpushdemo'; // App identifier for namespace isolation
+        let APP_NAME = 'nostrpushdemo'; // Default app name, will be updated from config
         let servicePubkey = null; // Will be decoded from SERVICE_NPUB
+        
+        // Get the appropriate chat kind based on app
+        function getChatKind() {
+            return APP_NAME === 'universes' ? 1111 : 9;
+        }
+        
+        // Get chat kind name for display
+        function getChatKindName() {
+            return APP_NAME === 'universes' ? 'Kind 1111' : 'Kind 9';
+        }
+        
+        // Update UI text based on app configuration
+        function updateUIForApp() {
+            const chatKindName = getChatKindName();
+            document.getElementById('chatSectionTitle').textContent = `💬 ${chatKindName} Subscriptions`;
+            document.getElementById('sendChatBtn').textContent = `Send ${chatKindName}`;
+        }
         
         // Platform detection
         const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || 
@@ -811,6 +838,7 @@
             
             // Check subscription status (for buttons state)
             await checkSubscriptionStatus();
+            await checkDMSubscriptionStatus();
             
             // Subscribe to incoming events for debugging
             subscribeToIncomingEvents();
@@ -1092,8 +1120,13 @@
                     return false;
                 }
                 
-                // Store the VAPID key early
+                // Store the VAPID key and app name from config
                 vapidPublicKey = config.vapidPublicKey;
+                if (config.appName) {
+                    APP_NAME = config.appName;
+                    log(`Using app: ${APP_NAME}`, 'info');
+                    updateUIForApp(); // Update UI text based on app
+                }
                 log(`VAPID key stored: ${vapidPublicKey ? vapidPublicKey.substring(0, 20) + '...' : 'NOT PROVIDED'}`, 'info');
                 
                 // Check if Firebase is already initialized
@@ -1879,7 +1912,8 @@
 
         async function subscribeToChats() {
             try {
-                const filter = { kinds: [9] }; // Kind 9 for chat messages
+                const chatKind = getChatKind();
+                const filter = { kinds: [chatKind] }; // Dynamic kind based on app
                 
                 // Create the subscription payload with just the filter
                 const payload = {
@@ -1905,7 +1939,7 @@
                 
                 await pool.publish([relayUrl], event);
                 
-                log('📥 Subscribed to kind 9 events', 'success');
+                log(`📥 Subscribed to ${getChatKindName()} events`, 'success');
                 
                 // Check actual subscription status from relay
                 setTimeout(() => checkSubscriptionStatus(), 1000);
@@ -1917,7 +1951,8 @@
         async function unsubscribeFromChats() {
             try {
                 // For unsubscribe, we send the same filter to delete
-                const filter = { kinds: [9] }; // Same filter as subscription
+                const chatKind = getChatKind();
+                const filter = { kinds: [chatKind] }; // Same filter as subscription
                 const payload = {
                     filter: filter
                 };
@@ -1946,11 +1981,144 @@
             }
         }
 
+        async function subscribeToDMs() {
+            try {
+                const filter = { kinds: [4, 1059] }; // NIP-4 and NIP-44 DMs
+                
+                // Create the subscription payload with just the filter
+                const payload = {
+                    filter: filter
+                };
+                
+                // Encrypt the payload using NIP-44 (use encryptFilterForService for proper key handling)
+                const encryptedContent = await encryptFilterForService(payload);
+                
+                // Create and sign the subscription event (kind 3081)
+                const event = finalizeEvent({
+                    kind: 3081,
+                    content: encryptedContent,
+                    tags: [
+                        ['app', APP_NAME],
+                        ['p', servicePubkey],
+                        ['expiration', (Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60)).toString()]
+                    ],
+                    created_at: Math.floor(Date.now() / 1000)
+                }, privateKey);
+                
+                await pool.publish([relayUrl], event);
+                
+                log('📥 Subscribed to DM events', 'success');
+                
+                // Check actual subscription status from relay
+                setTimeout(() => checkDMSubscriptionStatus(), 1000);
+            } catch (error) {
+                log(`DM subscription failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function unsubscribeFromDMs() {
+            try {
+                // For unsubscribe, we send the same filter to delete
+                const filter = { kinds: [4, 1059] }; // Same filter as subscription
+                const payload = {
+                    filter: filter
+                };
+                
+                // Encrypt the payload using NIP-44 (use encryptFilterForService for proper key handling)
+                const encryptedContent = await encryptFilterForService(payload);
+                
+                // Create and sign the unsubscription event (kind 3082)
+                const event = finalizeEvent({
+                    kind: 3082,
+                    content: encryptedContent,
+                    tags: [
+                        ['app', APP_NAME],
+                        ['p', servicePubkey]
+                    ],
+                    created_at: Math.floor(Date.now() / 1000)
+                }, privateKey);
+                
+                await pool.publish([relayUrl], event);
+                log('📤 Unsubscribed from DM events', 'info');
+                
+                // Check actual subscription status from relay
+                setTimeout(() => checkDMSubscriptionStatus(), 1000);
+            } catch (error) {
+                log(`DM unsubscription failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function checkDMSubscriptionStatus() {
+            if (!publicKey || !pool) {
+                return;
+            }
+            
+            try {
+                // Query for the user's DM subscription events
+                const events = await pool.querySync([relayUrl], {
+                    authors: [publicKey],
+                    kinds: [3081, 3082],
+                    '#app': [APP_NAME],
+                    limit: 20
+                });
+                
+                // Filter for DM-related events by checking encrypted content
+                // We look for events that were for DM kinds (4, 1059)
+                const dmEvents = [];
+                for (const event of events) {
+                    // For now, we'll check if this is a DM subscription by looking at recent events
+                    // In production, you'd decrypt and check the filter
+                    dmEvents.push(event);
+                }
+                
+                if (dmEvents.length === 0) {
+                    updateDMSubUI(false);
+                    return;
+                }
+                
+                // Sort by created_at to get the most recent DM-related event
+                dmEvents.sort((a, b) => b.created_at - a.created_at);
+                const latestEvent = dmEvents[0];
+                
+                // Kind 3081 = subscribe, Kind 3082 = unsubscribe
+                const isSubscribed = latestEvent.kind === 3081;
+                
+                updateDMSubUI(isSubscribed);
+                
+            } catch (error) {
+                console.error('Error checking DM subscription status:', error);
+            }
+        }
+        
+        function updateDMSubUI(subscribed) {
+            const badge = document.getElementById('dmSubStatus');
+            const subscribeBtn = document.getElementById('subscribeDM');
+            const unsubscribeBtn = document.getElementById('unsubscribeDM');
+            
+            if (subscribed) {
+                badge.textContent = 'DM Subscribed';
+                badge.className = 'status-badge active';
+                // When subscribed, disable subscribe button and enable unsubscribe
+                if (isRegistered) {
+                    subscribeBtn.disabled = true;
+                    unsubscribeBtn.disabled = false;
+                }
+            } else {
+                badge.textContent = 'DM Not Subscribed';
+                badge.className = 'status-badge inactive';
+                // When not subscribed, enable subscribe button and disable unsubscribe
+                if (isRegistered) {
+                    subscribeBtn.disabled = false;
+                    unsubscribeBtn.disabled = true;
+                }
+            }
+        }
+
         function subscribeToIncomingEvents() {
-            // Subscribe to kind 9 and kind 1059 (DM) events to see if they arrive
+            // Subscribe to chat and DM events to see if they arrive
             const sub = pool.subscribeMany([relayUrl], [
                 {
-                    kinds: [9],
+                    kinds: [getChatKind()],
                     limit: 10
                 },
                 {
@@ -1966,7 +2134,7 @@
                     if (isRecipient) {
                         log(`📥 Received encrypted DM`, 'info');
                     }
-                } else if (event.kind === 9) {
+                } else if (event.kind === getChatKind()) {
                     // Handle chat event
                     const authorNpub = window.NostrTools.nip19.npubEncode(event.pubkey);
                     const isOwnEvent = event.pubkey === publicKey;
@@ -2073,7 +2241,7 @@
                 }
                 
                 const event = finalizeEvent({
-                    kind: 9,
+                    kind: getChatKind(),
                     content: message,
                     tags: mentionTags,
                     created_at: Math.floor(Date.now() / 1000)
@@ -2107,8 +2275,16 @@
                 // Step 1: Unsubscribe from chats if subscribed
                 const subStatus = document.getElementById('subStatus').textContent;
                 if (subStatus === 'Subscribed') {
-                    log('Unsubscribing from kind 9 (kind 3082)...', 'info');
+                    log(`Unsubscribing from ${getChatKindName()} (kind 3082)...`, 'info');
                     await unsubscribeFromChats();
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Small delay
+                }
+                
+                // Step 1.5: Unsubscribe from DMs if subscribed
+                const dmSubStatus = document.getElementById('dmSubStatus').textContent;
+                if (dmSubStatus === 'Check server logs' || dmSubStatus === 'Subscribed') {
+                    log('Unsubscribing from DMs (kind 3082)...', 'info');
+                    await unsubscribeFromDMs();
                     await new Promise(resolve => setTimeout(resolve, 500)); // Small delay
                 }
                 
@@ -2151,9 +2327,15 @@
             if (registered) {
                 document.getElementById('subscribe').disabled = isSubscribed;
                 document.getElementById('unsubscribe').disabled = !isSubscribed;
+                // DM buttons state will be handled by checkDMSubscriptionStatus
+                // For now just check if they should be enabled
+                checkDMSubscriptionStatus();
             } else {
                 document.getElementById('subscribe').disabled = true;
                 document.getElementById('unsubscribe').disabled = true;
+                // Disable DM buttons when not registered
+                document.getElementById('subscribeDM').disabled = true;
+                document.getElementById('unsubscribeDM').disabled = true;
             }
             
             const badge = document.getElementById('pushStatus');

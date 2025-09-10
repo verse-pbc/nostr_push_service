@@ -1,3 +1,4 @@
+mod common;
 use nostr_push_service::{
     config::Settings,
     error::ServiceError,
@@ -39,7 +40,8 @@ fn create_test_settings(service_private_hex: String) -> Settings {
             private_key_hex: Some(service_private_hex),
             processed_event_ttl_secs: 3600,
             process_window_days: 7,
-            listen_kinds: vec![3079, 3080, 3081, 3082],
+            control_kinds: vec![3079, 3080, 3081, 3082],
+            dm_kinds: vec![1059, 14],
         },
         redis: nostr_push_service::config::RedisSettings {
             url: "redis://localhost:6379".to_string(),
@@ -47,8 +49,18 @@ fn create_test_settings(service_private_hex: String) -> Settings {
         },
         apps: vec![nostr_push_service::config::AppConfig {
             name: "nostrpushdemo".to_string(),
-            fcm_project_id: "test-project".to_string(),
-            fcm_credentials_base64: None,
+            frontend_config: nostr_push_service::config::FrontendConfig {
+                api_key: "test-api-key".to_string(),
+                auth_domain: "test.firebaseapp.com".to_string(),
+                project_id: "test-project".to_string(),
+                storage_bucket: "test.firebasestorage.app".to_string(),
+                messaging_sender_id: "123456".to_string(),
+                app_id: "1:123456:web:test".to_string(),
+                measurement_id: None,
+                vapid_public_key: "test-vapid-key".to_string(),
+            },
+            credentials_path: "./test-firebase-credentials.json".to_string(),
+            allowed_subscription_kinds: vec![1, 3, 7, 1111, 34550],
         }],
         nostr: nostr_push_service::config::NostrSettings {
             relay_url: "wss://test.relay".to_string(),
@@ -104,6 +116,18 @@ async fn create_test_app_state(settings: Settings, cleanup_app: Option<&str>) ->
     let nip29_client = nostr_push_service::nostr::nip29::Nip29Client::from_settings(&settings)
         .expect("Failed to create Nip29Client from settings");
     
+    let (subscription_manager, community_handler) = common::create_default_handlers();
+    
+    // Get the nostr client from nip29_client  
+    let nostr_client = nip29_client.client();
+    
+    // Add a relay to the client for subscription management (using settings relay URL)
+    // This is needed for the subscription manager to work properly
+    let _ = nostr_client.add_relay(&settings.nostr.relay_url).await;
+    
+    // Initialize the shared user subscriptions map
+    let user_subscriptions = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    
     Arc::new(AppState {
         settings,
         redis_pool,
@@ -112,6 +136,10 @@ async fn create_test_app_state(settings: Settings, cleanup_app: Option<&str>) ->
         service_keys,
         crypto_service,
         nip29_client: Arc::new(nip29_client),
+        nostr_client,
+        user_subscriptions,
+        subscription_manager,
+        community_handler,
     })
 }
 
@@ -353,13 +381,33 @@ async fn test_multi_app_namespace_isolation() {
     settings.apps = vec![
         nostr_push_service::config::AppConfig {
             name: app1_name.to_string(),
-            fcm_project_id: "test-project-1".to_string(),
-            fcm_credentials_base64: None,
+            frontend_config: nostr_push_service::config::FrontendConfig {
+                api_key: "test-api-key".to_string(),
+                auth_domain: "test.firebaseapp.com".to_string(),
+                project_id: "test-project-1".to_string(),
+                storage_bucket: "test.firebasestorage.app".to_string(),
+                messaging_sender_id: "123456".to_string(),
+                app_id: "1:123456:web:test".to_string(),
+                measurement_id: None,
+                vapid_public_key: "test-vapid-key".to_string(),
+            },
+            credentials_path: "./test-firebase-credentials.json".to_string(),
+            allowed_subscription_kinds: vec![],
         },
         nostr_push_service::config::AppConfig {
             name: app2_name.to_string(),
-            fcm_project_id: "test-project-2".to_string(),
-            fcm_credentials_base64: None,
+            frontend_config: nostr_push_service::config::FrontendConfig {
+                api_key: "test-api-key".to_string(),
+                auth_domain: "test.firebaseapp.com".to_string(),
+                project_id: "test-project-2".to_string(),
+                storage_bucket: "test.firebasestorage.app".to_string(),
+                messaging_sender_id: "123456".to_string(),
+                app_id: "1:123456:web:test".to_string(),
+                measurement_id: None,
+                vapid_public_key: "test-vapid-key".to_string(),
+            },
+            credentials_path: "./test-firebase-credentials.json".to_string(),
+            allowed_subscription_kinds: vec![],
         },
     ];
     
@@ -494,9 +542,9 @@ async fn test_subscription_with_proper_tags() {
     );
     process_event(app_state.clone(), reg_event).await.expect("Registration failed");
     
-    // Create subscription filter
+    // Create subscription filter with allowed kinds
     let filter = json!({
-        "kinds": [1, 9], // Text notes and chat messages
+        "kinds": [1, 3], // Text notes and contact lists (both are allowed in test settings)
         "#p": [user_pubkey.to_hex()]
     });
     
@@ -509,12 +557,31 @@ async fn test_subscription_with_proper_tags() {
         &app_name,
     );
     
+    // Debug: Check service keys
+    println!("Service pubkey from settings: {:?}", app_state.service_keys.as_ref().map(|k| k.public_key().to_hex()));
+    println!("Expected service pubkey: {}", service_pubkey.to_hex());
+    
     // Process subscription
-    let result = process_event(app_state.clone(), sub_event).await;
+    let result = process_event(app_state.clone(), sub_event.clone()).await;
+    match &result {
+        Ok(_) => println!("Subscription processing succeeded"),
+        Err(e) => println!("Subscription processing failed: {:?}", e),
+    }
+    
+    // Debug: Print event details
+    println!("Event kind: {}", sub_event.kind);
+    println!("Event pubkey: {}", sub_event.pubkey.to_hex());
+    println!("Event p-tags: {:?}", sub_event.tags.iter()
+        .filter(|t| t.kind() == nostr_sdk::TagKind::p())
+        .map(|t| t.content())
+        .collect::<Vec<_>>());
+    
     assert!(result.is_ok(), "Subscription should succeed");
     
-    // Verify subscription was stored
-    let subscriptions = redis_store::get_subscriptions_with_app(
+    // Verify subscription was stored using the new hash-based storage
+    println!("Checking subscriptions for app: {}, pubkey: {}", app_name, user_pubkey.to_hex());
+    
+    let subscriptions = redis_store::get_subscriptions_by_hash(
         &app_state.redis_pool,
         &app_name,
         &user_pubkey
@@ -522,7 +589,14 @@ async fn test_subscription_with_proper_tags() {
     .await
     .expect("Failed to get subscriptions");
     
+    println!("Found {} subscriptions", subscriptions.len());
+    
     assert!(!subscriptions.is_empty(), "Subscription should be stored");
+    
+    // Verify the filter content matches what we sent
+    assert_eq!(subscriptions.len(), 1, "Should have exactly one subscription");
+    let (stored_filter, _timestamp) = &subscriptions[0];
+    assert_eq!(stored_filter.get("kinds"), filter.get("kinds"), "Filter kinds should match");
     
     // Test unsubscribe
     let unsub_event = create_subscription_event(
@@ -536,7 +610,7 @@ async fn test_subscription_with_proper_tags() {
     process_event(app_state.clone(), unsub_event).await.expect("Unsubscribe failed");
     
     // Verify subscription was removed
-    let subscriptions = redis_store::get_subscriptions_with_app(
+    let subscriptions = redis_store::get_subscriptions_by_hash(
         &app_state.redis_pool,
         &app_name,
         &user_pubkey

@@ -442,7 +442,8 @@ mod tests {
                 private_key_hex: Some(test_key_hex.to_string()),
                 process_window_days: 0,
                 processed_event_ttl_secs: 0,
-                listen_kinds: vec![],
+                control_kinds: vec![],
+                dm_kinds: vec![],
             },
             redis: crate::config::RedisSettings {
                 url: "".to_string(),

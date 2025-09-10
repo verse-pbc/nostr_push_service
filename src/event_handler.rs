@@ -2,12 +2,15 @@ use crate::{
     crypto::CryptoService,
     error::Result,
     fcm_sender,
+    handlers::CommunityHandler,
     models::FcmPayload,
     nostr::nip29,
     redis_store,
     state::AppState,
+    subscriptions::SubscriptionManager,
 };
 use nostr_sdk::prelude::*;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
@@ -27,9 +30,9 @@ const KIND_REGISTRATION: Kind = Kind::Custom(3079);
 const KIND_DEREGISTRATION: Kind = Kind::Custom(3080);
 const KIND_SUBSCRIPTION_UPSERT: Kind = Kind::Custom(3081);
 const KIND_SUBSCRIPTION_DELETE: Kind = Kind::Custom(3082);
-const KIND_DM: Kind = Kind::GiftWrap; // NIP-17 Private Direct Messages (kind 1059)
+const KIND_NIP44_DM: Kind = Kind::GiftWrap; // NIP-44 DM (kind 1059)
+const KIND_NIP17_DM: Kind = Kind::PrivateDirectMessage; // NIP-17 Private DM (kind 14)
 const BROADCASTABLE_EVENT_KINDS: [Kind; 1] = [Kind::Custom(9)]; // Only kind 9 is broadcastable
-// Note: Group messages are now identified by presence of 'h' tag, not by specific kinds
 
 // Replay horizon: ignore events older than this
 const REPLAY_HORIZON_DAYS: u64 = 7;
@@ -56,12 +59,19 @@ fn get_app_tag(event: &Event) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Check if event is a DM
+fn is_dm_event(event: &Event) -> bool {
+    event.kind == KIND_NIP44_DM || event.kind == KIND_NIP17_DM
+}
+
 pub async fn run(
     state: Arc<AppState>,
     mut event_rx: Receiver<(Box<Event>, EventContext)>,
     token: CancellationToken,
 ) -> Result<()> {
-    tracing::info!("Starting event handler...");
+    info!("Starting event handler with NIP-72 support...");
+
+    let relay_url = &state.settings.nostr.relay_url;
 
     loop {
         tokio::select! {
@@ -89,6 +99,7 @@ pub async fn run(
                     continue;
                 }
 
+                // Check if already processed
                 tokio::select! {
                     biased;
                     _ = token.cancelled() => {
@@ -112,63 +123,8 @@ pub async fn run(
                     }
                 }
 
-                // For push notification management events (3079-3082), check if they're targeted to us
-                let needs_service_check = event_kind == KIND_REGISTRATION 
-                    || event_kind == KIND_DEREGISTRATION 
-                    || event_kind == KIND_SUBSCRIPTION_UPSERT 
-                    || event_kind == KIND_SUBSCRIPTION_DELETE;
-                
-                if needs_service_check {
-                    // Check if this event is targeted to our service via p tag
-                    if let Some(ref service_keys) = state.service_keys {
-                        if !is_event_for_service(&event, &service_keys.public_key()) {
-                            debug!(
-                                event_id = %event_id, 
-                                kind = %event_kind,
-                                "Ignoring push notification event not targeted to our service"
-                            );
-                            continue;
-                        }
-                    } else {
-                        warn!(event_id = %event_id, "No service keys configured - cannot filter by p tag");
-                    }
-                    
-                    // Check if the app tag is in our supported apps list
-                    let app = get_app_tag(&event).unwrap_or_else(|| "default".to_string());
-                    if !state.supported_apps.contains(&app) {
-                        debug!(
-                            event_id = %event_id,
-                            kind = %event_kind,
-                            app = %app,
-                            "Ignoring control event for unconfigured app"
-                        );
-                        continue;
-                    }
-                }
-
-                info!(event_id = %event_id, kind = %event_kind, "Dispatching event handler");
-
-                let handler_result = if event_kind == KIND_REGISTRATION {
-                    handle_registration(&state, &event).await
-                } else if event_kind == KIND_DEREGISTRATION {
-                    handle_deregistration(&state, &event).await
-                } else if event_kind == KIND_SUBSCRIPTION_UPSERT {
-                    handle_subscription_upsert(&state, &event, token.clone()).await
-                } else if event_kind == KIND_SUBSCRIPTION_DELETE {
-                    handle_subscription_delete(&state, &event, token.clone()).await
-                } else if event_kind == KIND_DM {
-                    info!(event_id = %event_id, "Processing DM event (kind 1059)");
-                    handle_dm(&state, &event, token.clone()).await
-                } else if event.tags.find(TagKind::h()).is_some() {
-                    // Handle events with 'h' tag (group-scoped events)
-                    // This includes group messages, replies, and any other group-scoped events
-                    // Note: We only run the group handler, not custom subscriptions, to avoid duplicate notifications
-                    // for mentions that are already handled by the group logic
-                    handle_group_message(&state, &event, token.clone()).await
-                } else {
-                    // For all other events (including non-group kind 9/10), check user subscriptions
-                    handle_custom_subscriptions(&state, &event, context, token.clone()).await
-                };
+                // Route the event based on its type
+                let handler_result = route_event(&state, &event, context, relay_url, token.clone()).await;
 
                 match handler_result {
                     Ok(_) => {
@@ -193,24 +149,13 @@ pub async fn run(
                         }
                     }
                     Err(e) => {
-                        // Removed downcast_ref check for ServiceError::Cancelled
-                        // Cancellation is handled by the select! blocks
-                        /*
-                        if let Some(service_error) = e.downcast_ref::<crate::error::ServiceError>() {
-                            if matches!(service_error, crate::error::ServiceError::Cancelled) {
-                                info!(event_id = %event_id, "Handler for event cancelled internally.");
-                                break; // Exit outer loop if handler was cancelled
-                            }
-                        }
-                        */
                         error!(event_id = %event_id, error = %e, "Failed to handle event");
-                        // Decide if the error is fatal or if we should continue processing other events
-                        // For now, continue processing other events
+                        // Continue processing other events
                     }
                 }
 
                 if token.is_cancelled() {
-                    info!(event_id = %event_id, "Event handler cancellation detected after processing event {}.", event_id);
+                    info!(event_id = %event_id, "Event handler cancellation detected after processing event.");
                     break;
                 }
             }
@@ -220,6 +165,159 @@ pub async fn run(
     info!("Event handler shut down.");
     Ok(())
 }
+
+async fn route_event(
+    state: &AppState,
+    event: &Event,
+    context: EventContext,
+    relay_url: &str,
+    token: CancellationToken,
+) -> Result<()> {
+    let event_kind = event.kind;
+    let event_id = event.id;
+    
+    // Check for push notification management events (3079-3082)
+    let is_control_event = event_kind == KIND_REGISTRATION 
+        || event_kind == KIND_DEREGISTRATION 
+        || event_kind == KIND_SUBSCRIPTION_UPSERT 
+        || event_kind == KIND_SUBSCRIPTION_DELETE;
+    
+    if is_control_event {
+        debug!(event_id = %event_id, kind = %event_kind, "Processing control event");
+        
+        // Check if this event is targeted to our service via p tag
+        if let Some(ref service_keys) = state.service_keys {
+            if !is_event_for_service(event, &service_keys.public_key()) {
+                debug!(event_id = %event_id, kind = %event_kind, "Ignoring control event not targeted to our service");
+                return Ok(());
+            }
+            debug!(event_id = %event_id, "Control event is for this service");
+        } else {
+            warn!("No service keys configured - cannot filter by p tag");
+        }
+        
+        // Check if the app tag is in our supported apps list
+        let app = get_app_tag(event).unwrap_or_else(|| "default".to_string());
+        if !state.supported_apps.contains(&app) {
+            debug!(
+                event_id = %event_id,
+                kind = %event_kind,
+                app = %app,
+                "Ignoring control event for unconfigured app"
+            );
+            return Ok(());
+        }
+        
+        // Route to appropriate control handler
+        if event_kind == KIND_REGISTRATION {
+            return handle_registration(state, event).await;
+        } else if event_kind == KIND_DEREGISTRATION {
+            return handle_deregistration(state, event).await;
+        } else if event_kind == KIND_SUBSCRIPTION_UPSERT {
+            return handle_subscription_upsert(state, event, token).await;
+        } else if event_kind == KIND_SUBSCRIPTION_DELETE {
+            return handle_subscription_delete(state, event, token).await;
+        } else {
+            return Ok(());
+        }
+    }
+    
+    // Check if it's a DM
+    if is_dm_event(event) {
+        info!(event_id = %event_id, kind = %event_kind, "Processing DM event");
+        return handle_dm(state, event, token).await;
+    }
+    
+    // Extract tags for routing
+    let has_h_tag = event.tags.find(TagKind::h()).is_some();
+    let a_tags = CommunityHandler::extract_a_tags(event);
+    let has_a_tag = !a_tags.is_empty();
+    
+    // Route based on tags
+    if has_h_tag && has_a_tag {
+        // Event has both 'h' and 'a' tags - route to both groups and communities
+        debug!(event_id = %event_id, "Event has both h and a tags, routing to both");
+        let recipients = state.community_handler.route_event(event, relay_url).await;
+        return send_notifications_to_recipients(state, event, recipients, token).await;
+    } else if has_h_tag {
+        // NIP-29 group event
+        debug!(event_id = %event_id, "Processing NIP-29 group event");
+        return handle_group_message(state, event, token).await;
+    } else if has_a_tag {
+        // NIP-72 community event
+        debug!(event_id = %event_id, "Processing NIP-72 community event");
+        return handle_community_event(state, event, relay_url, token).await;
+    } else {
+        // Regular event - check custom subscriptions
+        return handle_custom_subscriptions(state, event, context, token).await;
+    }
+}
+
+async fn handle_community_event(
+    state: &AppState,
+    event: &Event,
+    relay_url: &str,
+    token: CancellationToken,
+) -> Result<()> {
+    let event_id = event.id;
+    let a_tags = CommunityHandler::extract_a_tags(event);
+    
+    debug!(event_id = %event_id, a_tags = ?a_tags, "Routing community event");
+    
+    // Get all recipients for this community event
+    let recipients = state.community_handler.route_event(event, relay_url).await;
+    
+    if recipients.is_empty() {
+        debug!(event_id = %event_id, "No recipients for community event");
+        return Ok(());
+    }
+    
+    info!(event_id = %event_id, recipient_count = recipients.len(), "Sending notifications for community event");
+    
+    send_notifications_to_recipients(state, event, recipients, token).await
+}
+
+async fn send_notifications_to_recipients(
+    state: &AppState,
+    event: &Event,
+    recipients: HashSet<String>,
+    token: CancellationToken,
+) -> Result<()> {
+    let event_id = event.id;
+    
+    for recipient_pubkey in recipients {
+        // Check for cancellation
+        if token.is_cancelled() {
+            info!("Notification sending cancelled");
+            break;
+        }
+        
+        // Parse the pubkey and send notification
+        if let Ok(pubkey) = PublicKey::from_str(&recipient_pubkey) {
+            if let Err(e) = send_notification_to_user(state, event, &pubkey, token.clone()).await {
+                if matches!(e, crate::error::ServiceError::Cancelled) {
+                    return Err(e);
+                }
+                error!(
+                    event_id = %event_id,
+                    recipient = %recipient_pubkey,
+                    error = %e,
+                    "Failed to send notification"
+                );
+            }
+        } else {
+            error!(
+                event_id = %event_id,
+                recipient = %recipient_pubkey,
+                "Invalid pubkey format"
+            );
+        }
+    }
+    
+    Ok(())
+}
+
+// Placeholder functions for handlers that need to be implemented
 
 async fn handle_registration(state: &AppState, event: &Event) -> Result<()> {
     assert!(event.kind == KIND_REGISTRATION);
@@ -264,7 +362,7 @@ async fn handle_registration(state: &AppState, event: &Event) -> Result<()> {
     }
 
     // Extract app tag for namespace isolation
-    let app = get_app_tag(&event).unwrap_or_else(|| "default".to_string());
+    let app = get_app_tag(event).unwrap_or_else(|| "default".to_string());
     
     match redis_store::add_or_update_token_with_app(&state.redis_pool, &app, &event.pubkey, fcm_token).await {
         Ok(_) => {
@@ -320,7 +418,7 @@ async fn handle_deregistration(state: &AppState, event: &Event) -> Result<()> {
     }
 
     // Extract app tag for namespace isolation
-    let app = get_app_tag(&event).unwrap_or_else(|| "default".to_string());
+    let app = get_app_tag(event).unwrap_or_else(|| "default".to_string());
     
     let removed = redis_store::remove_token_with_app(&state.redis_pool, &app, &event.pubkey, fcm_token).await?;
     if removed {
@@ -331,6 +429,40 @@ async fn handle_deregistration(state: &AppState, event: &Event) -> Result<()> {
             "Token not found for deregistration"
         );
     }
+    
+    // Clean up all subscriptions for this user when they deregister
+    let pubkey_hex = event.pubkey.to_hex();
+    let removed_filters = state.subscription_manager
+        .remove_all_user_filters(&app, &pubkey_hex)
+        .await;
+    
+    // Unsubscribe from relay for any filters that are no longer needed
+    if !removed_filters.is_empty() {
+        let mut user_subs = state.user_subscriptions.write().await;
+        for filter_hash in &removed_filters {
+            if let Some(subscription_id) = user_subs.remove(filter_hash) {
+                state.nostr_client.unsubscribe(&subscription_id).await;
+                info!(
+                    event_id = %event.id,
+                    filter_hash = &filter_hash[..8],
+                    subscription_id = %subscription_id,
+                    "Unsubscribed from relay during deregistration"
+                );
+            }
+        }
+        
+        info!(
+            event_id = %event.id,
+            pubkey = %event.pubkey,
+            app = %app,
+            removed_count = removed_filters.len(),
+            "Cleaned up user subscriptions during deregistration"
+        );
+    }
+    
+    // Also clean up any community/group memberships
+    state.community_handler.cleanup_user(&pubkey_hex).await;
+    
     Ok(())
 }
 
@@ -399,13 +531,11 @@ pub async fn handle_dm(state: &AppState, event: &Event, token: CancellationToken
     Ok(())
 }
 
-/// Handle subscription upsert events (kind 3081)
 pub async fn handle_subscription_upsert(
     state: &AppState,
     event: &Event,
     token: CancellationToken,
 ) -> Result<()> {
-    debug!(event_id = %event.id, "Handling subscription upsert");
 
     if token.is_cancelled() {
         info!(event_id = %event.id, "Cancelled before handling subscription upsert.");
@@ -416,7 +546,7 @@ pub async fn handle_subscription_upsert(
     if let Err(e) = CryptoService::validate_encrypted_content(&event.content) {
         error!(
             event_id = %event.id, pubkey = %event.pubkey, error = %e,
-            "Received subscription with plaintext filter - rejecting"
+            "Received subscription with plaintext content - rejecting"
         );
         return Ok(()); // Don't process plaintext filters
     }
@@ -452,15 +582,112 @@ pub async fn handle_subscription_upsert(
     };
     
     // Extract app tag for namespace isolation
-    let app = get_app_tag(&event).unwrap_or_else(|| "default".to_string());
+    let app = get_app_tag(event).unwrap_or_else(|| "default".to_string());
+    
+    // Check if this app is supported
+    if !state.supported_apps.contains(&app) {
+        warn!(
+            event_id = %event.id, 
+            pubkey = %event.pubkey,
+            app = %app,
+            "Subscription request for unsupported app"
+        );
+        return Ok(());
+    }
+    
+    // Check if the filter kinds are allowed for this app
+    if let Some(app_config) = state.settings.apps.iter().find(|a| a.name == app) {
+        // Extract kinds from the filter
+        let filter_json = serde_json::to_value(&filter).map_err(|e| {
+            crate::error::ServiceError::Internal(format!("Failed to serialize filter: {}", e))
+        })?;
+        
+        if let Some(kinds) = filter_json.get("kinds").and_then(|k| k.as_array()) {
+            for kind_val in kinds {
+                if let Some(kind_num) = kind_val.as_u64() {
+                    if !app_config.allowed_subscription_kinds.contains(&kind_num) {
+                        warn!(
+                            event_id = %event.id,
+                            pubkey = %event.pubkey,
+                            app = %app,
+                            kind = kind_num,
+                            "Filter contains disallowed kind for app"
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    // Add filter to subscription manager and check if it's new
+    let pubkey_hex = event.pubkey.to_hex();
+    let (filter_hash, is_new_filter) = state.subscription_manager
+        .add_user_filter(app.clone(), pubkey_hex.clone(), filter.clone())
+        .await;
+    
+    // Check if filter contains DM kinds - if so, skip relay subscription (DMs use global subscription)
+    let filter_json = serde_json::to_value(&filter).map_err(|e| {
+        crate::error::ServiceError::Internal(format!("Failed to serialize filter for DM check: {}", e))
+    })?;
+    
+    let has_dm_kinds = if let Some(kinds) = filter_json.get("kinds").and_then(|k| k.as_array()) {
+        kinds.iter().any(|kind_val| {
+            if let Some(kind_num) = kind_val.as_u64() {
+                state.settings.service.dm_kinds.contains(&kind_num)
+            } else {
+                false
+            }
+        })
+    } else {
+        false
+    };
+    
+    // If this is a new filter (ref_count went from 0->1), create relay subscription
+    // Skip relay subscription for DM kinds (they use global subscription)
+    if is_new_filter && !has_dm_kinds {
+        match state.nostr_client.subscribe(filter.clone(), None).await {
+            Ok(output) => {
+                let subscription_id = output.val;
+                let mut user_subs = state.user_subscriptions.write().await;
+                user_subs.insert(filter_hash.clone(), subscription_id.clone());
+                info!(
+                    event_id = %event.id,
+                    filter_hash = &filter_hash[..8],
+                    subscription_id = %subscription_id,
+                    "Created new relay subscription for filter"
+                );
+            }
+            Err(e) => {
+                error!(
+                    event_id = %event.id,
+                    filter_hash = &filter_hash[..8],
+                    error = %e,
+                    "Failed to create relay subscription"
+                );
+                // Roll back the subscription manager state
+                state.subscription_manager.remove_user_filter(&app, &pubkey_hex, &filter_hash).await;
+                return Err(crate::error::ServiceError::Internal(
+                    format!("Failed to create relay subscription: {}", e)
+                ));
+            }
+        }
+    } else if is_new_filter && has_dm_kinds {
+        info!(
+            event_id = %event.id,
+            filter_hash = &filter_hash[..8],
+            "Skipped relay subscription for DM kinds (using global DM subscription)"
+        );
+    }
 
     // Convert filter to JSON Value for storage
     let filter_value = serde_json::to_value(&filter).map_err(|e| {
         crate::error::ServiceError::Internal(format!("Failed to serialize filter: {}", e))
     })?;
 
-    // Store the subscription using hash-based storage
+    // Store the subscription in Redis for persistence
     let subscription_timestamp = event.created_at.as_u64();
+    
     redis_store::add_subscription_by_filter(
         &state.redis_pool,
         &app,
@@ -470,17 +697,15 @@ pub async fn handle_subscription_upsert(
     ).await?;
 
     info!(
-        event_id = %event.id, 
-        pubkey = %event.pubkey,
+        event_id = %event.id,
         app = %app,
-        filter_hash = crate::crypto::hash_filter(&filter_value)[..8].to_string(),
-        timestamp = subscription_timestamp,
-        "Added/updated encrypted subscription filter"
+        filter_hash = &filter_hash[..8],
+        "Successfully stored subscription"
     );
     Ok(())
 }
 
-/// Handle subscription delete events (kind 3082)
+
 pub async fn handle_subscription_delete(
     state: &AppState,
     event: &Event,
@@ -524,9 +749,41 @@ pub async fn handle_subscription_delete(
     };
 
     // Extract app tag for namespace isolation
-    let app = get_app_tag(&event).unwrap_or_else(|| "default".to_string());
+    let app = get_app_tag(event).unwrap_or_else(|| "default".to_string());
+    
+    // Parse the filter from the delete payload
+    let filter: Filter = match serde_json::from_value(delete_payload.filter.clone()) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!(event_id = %event.id, error = %e, "Invalid filter in delete payload");
+            return Ok(());
+        }
+    };
+    
+    // Compute the filter hash to find the subscription
+    let filter_hash = SubscriptionManager::compute_filter_hash(&filter);
+    let pubkey_hex = event.pubkey.to_hex();
+    
+    // Remove from subscription manager and check if it was the last reference
+    let was_removed = state.subscription_manager
+        .remove_user_filter(&app, &pubkey_hex, &filter_hash)
+        .await;
+    
+    // If the filter was completely removed (ref_count reached 0), unsubscribe from relay
+    if was_removed {
+        let mut user_subs = state.user_subscriptions.write().await;
+        if let Some(subscription_id) = user_subs.remove(&filter_hash) {
+            state.nostr_client.unsubscribe(&subscription_id).await;
+            info!(
+                event_id = %event.id,
+                filter_hash = &filter_hash[..8],
+                subscription_id = %subscription_id,
+                "Unsubscribed from relay (no more users for this filter)"
+            );
+        }
+    }
 
-    // Remove the subscription using hash-based storage
+    // Remove the subscription from Redis storage
     let removed = redis_store::remove_subscription_by_filter(
         &state.redis_pool, 
         &app, 
@@ -539,22 +796,22 @@ pub async fn handle_subscription_delete(
             event_id = %event.id, 
             pubkey = %event.pubkey, 
             app = %app, 
-            filter_hash = crate::crypto::hash_filter(&delete_payload.filter)[..8].to_string(),
+            filter_hash = &filter_hash[..8],
+            was_last_ref = was_removed,
             "Removed subscription by filter hash"
         );
     } else {
         warn!(
             event_id = %event.id, 
             pubkey = %event.pubkey, 
-            filter_hash = crate::crypto::hash_filter(&delete_payload.filter)[..8].to_string(),
-            "Subscription with specified filter not found"
+            filter_hash = &filter_hash[..8],
+            "Subscription with specified filter not found in Redis"
         );
     }
     Ok(())
 }
 
 /// Handle group-scoped events (events with 'h' tag) by checking mentions and group membership.
-/// For broadcast messages, notify all group members.
 async fn handle_group_message(
     state: &AppState,
     event: &Event,
@@ -781,16 +1038,66 @@ async fn send_notification_to_user(
         return Ok(());
     }
     
-    let total_tokens: usize = tokens_by_app.values().map(|v| v.len()).sum();
-    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), token_count = total_tokens, app_count = tokens_by_app.len(), "Found FCM tokens for recipient");
+    // For DM events, filter tokens to only include apps where user has subscribed to DM kinds
+    let filtered_tokens_by_app = if is_dm_event(event) {
+        let mut filtered = std::collections::HashMap::new();
+        let target_pubkey_hex = target_pubkey.to_hex();
+        
+        for (app, tokens) in tokens_by_app {
+            // Check if user has any filters with DM kinds for this app
+            let user_filters = state.subscription_manager.get_user_filters(&app, &target_pubkey_hex).await;
+            let mut has_dm_subscription = false;
+            
+            for filter_hash in user_filters {
+                if let Some(filter) = state.subscription_manager.get_filter_by_hash(&filter_hash).await {
+                    // Check if any kind in the filter is a DM kind
+                    let filter_json = serde_json::to_value(&filter).unwrap_or_default();
+                    if let Some(kinds) = filter_json.get("kinds").and_then(|k| k.as_array()) {
+                        has_dm_subscription = kinds.iter().any(|kind_val| {
+                            if let Some(kind_num) = kind_val.as_u64() {
+                                state.settings.service.dm_kinds.contains(&kind_num)
+                            } else {
+                                false
+                            }
+                        });
+                        if has_dm_subscription {
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if has_dm_subscription {
+                info!(event_id = %event_id, target_pubkey = %target_pubkey_hex, app = %app, "User has DM subscription - including tokens");
+                filtered.insert(app, tokens);
+            } else {
+                info!(event_id = %event_id, target_pubkey = %target_pubkey_hex, app = %app, "User has NO DM subscription - skipping tokens");
+            }
+        }
+        filtered
+    } else {
+        tokens_by_app
+    };
+    
+    if filtered_tokens_by_app.is_empty() {
+        if is_dm_event(event) {
+            info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), "No DM subscriptions found for recipient - skipping notification");
+        } else {
+            info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), "No tokens after filtering - skipping notification");
+        }
+        return Ok(());
+    }
 
-    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), "Creating FCM payload for DM notification");
+    let total_tokens: usize = filtered_tokens_by_app.values().map(|v| v.len()).sum();
+    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), token_count = total_tokens, app_count = filtered_tokens_by_app.len(), "Found FCM tokens for recipient");
+
+    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), "Creating FCM payload for notification");
     let payload = create_fcm_payload(event, target_pubkey)?;
 
     // Send notifications using the appropriate FCM client for each app
     let mut all_results = std::collections::HashMap::new();
     
-    for (app, tokens) in tokens_by_app {
+    for (app, tokens) in filtered_tokens_by_app {
         // Get the FCM client for this app
         let fcm_client = match state.fcm_clients.get(&app) {
             Some(client) => client,
@@ -881,7 +1188,7 @@ async fn send_notification_to_user(
     Ok(())
 }
 
-/// Handle events based on user-defined subscription filters
+
 pub async fn handle_custom_subscriptions(
     state: &AppState,
     event: &Event,
@@ -1068,6 +1375,7 @@ fn event_mentions_user(event: &Event, user_pubkey: &PublicKey) -> bool {
 
 // Extracts pubkeys mentioned in any tag starting with "p".
 // Delegates to the helper in the nip29 module.
+
 fn extract_mentioned_pubkeys(event: &Event) -> Vec<nostr_sdk::PublicKey> {
     nip29::extract_pubkeys_from_p_tags(&event.tags).collect()
 }

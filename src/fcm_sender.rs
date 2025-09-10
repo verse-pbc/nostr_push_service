@@ -4,9 +4,9 @@ use firebase_messaging_rs::{
     fcm::{FCMApi, FCMError as FirebaseFCMError, Message, Notification},
     FCMClient as FirebaseClient,
 };
-// Removed unused import
+// Removed unused imports
 // use serde_json;
-use base64;
+// use base64;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, time::Duration};
 use thiserror::Error;
@@ -192,38 +192,6 @@ pub struct FcmClient {
 impl FcmClient {
     // Updated new to initialize with the RealFcmClient implementation
     pub fn new(settings: &FcmSettings) -> Result<Self, FcmError> {
-        // Handle credentials from base64 environment variable
-        if let Ok(credentials_base64) = std::env::var("NOSTR_PUSH__FCM__CREDENTIALS_BASE64") {
-            if !credentials_base64.is_empty() {
-                // Decode base64 credentials
-                use base64::Engine;
-                match base64::engine::general_purpose::STANDARD.decode(&credentials_base64) {
-                    Ok(credentials_json) => {
-                        // Write to a temporary file
-                        let temp_dir = std::env::temp_dir();
-                        let creds_path = temp_dir.join("firebase-service-account.json");
-                        
-                        match std::fs::write(&creds_path, credentials_json) {
-                            Ok(_) => {
-                                tracing::info!("Wrote Firebase credentials to temporary file: {:?}", creds_path);
-                                // Set GOOGLE_APPLICATION_CREDENTIALS to the temp file path
-                                std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", creds_path.to_str().unwrap());
-                                tracing::info!("Set GOOGLE_APPLICATION_CREDENTIALS environment variable");
-                            },
-                            Err(e) => {
-                                tracing::error!("Failed to write Firebase credentials to temp file: {}", e);
-                                return Err(FcmError::Initialization(format!("Failed to write credentials: {}", e)));
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!("Failed to decode base64 Firebase credentials: {}", e);
-                        return Err(FcmError::Initialization(format!("Failed to decode credentials: {}", e)));
-                    }
-                }
-            }
-        }
-        
         // Pass the project_id to RealFcmClient
         // The library will use this instead of GOOGLE_CLOUD_PROJECT env var
         let real_client = RealFcmClient::new(&settings.project_id)?;
