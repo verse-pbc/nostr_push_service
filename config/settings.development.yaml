@@ -53,13 +53,13 @@ apps:
     credentials_path: "./firebase-service-account-universes.json"
     allowed_subscription_kinds: # Kinds this app can subscribe to via user filters
       - 3     # Contacts
+      - 4     # NIP-4 private DMs
       - 6     # Reposts
       - 7     # Reactions
-      - 4     # NIP-4 private DMs
-      - 30023 # Long-form content
       - 1059  # NIP-44 gift-wrapped DMs
       - 1111  # Comments/messages in communities (NIP-22)
       - 4552  # Join requests (moderator notifications)
+      - 30023 # Long-form content
       - 34550 # Community definitions (NIP-72)
       - 34551 # Approved members list updates
       - 34552 # Declined members list updates

@@ -161,7 +161,7 @@ mod tests {
                 assert_eq!(universes.frontend_config.project_id, "universes-2bc44");
                 assert_eq!(universes.frontend_config.api_key, "AIzaSyACtVJJqIGM-lIsALzXggdGJRpxl31U0iQ");
                 assert_eq!(universes.frontend_config.vapid_public_key, "BNPu0TK2qLDu-TiW09NqNU8QGeQuLSyZ87fPJm9wMwYsIA2bt6Bzi5IfmA0NmhQNa5jaSnH_tsmLEw6t5OMR4H8");
-                assert_eq!(universes.allowed_subscription_kinds, vec![3, 6, 7, 4, 30023, 1059, 1111, 4552, 34550, 34551, 34552, 34553, 9735]);
+                assert_eq!(universes.allowed_subscription_kinds, vec![3, 4, 6, 7, 1059, 1111, 4552, 30023, 34550, 34551, 34552, 34553, 9735]);
                 
             }
             Err(e) => {
