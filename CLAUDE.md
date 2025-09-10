@@ -76,3 +76,27 @@ When you hit a blocker, follow these steps in order:
    Spot unintended regressions or logic changes since your last commit.
 
 For more detailed development information, see [Developer Guide](docs/developer-guide.md).
+
+## Subscription Management Patterns
+
+### Shared Subscriptions
+- **Filter Normalization**: Remove `limit`, `since`, `until` before hashing
+- **Reference Counting**: Use Redis `HINCRBY` for atomic operations
+- **Filter Hash**: Use SHA256 of sorted, deduplicated filter JSON
+- **Redis Keys**:
+  - `shared_filters:{hash}` - Filter definition and ref_count
+  - `user_filters:{app}:{pubkey}` - User's active filter hashes
+  - `filter_users:{hash}` - Reverse mapping for notifications
+
+### NIP-72 Community Support
+- **'a' Tag Format**: `34550:creator_pubkey:community_identifier`
+- **Community Events**: Kinds 1111 (thread), 34550 (definition), 4550 (approval)
+- **Routing**: Parse 'a' tags from events, route to community subscribers
+- **Redis Keys**:
+  - `community_members:{community_id}` - Community member set
+  - `user_communities:{pubkey}` - User's subscribed communities
+
+### Configuration Changes
+- **control_kinds**: Minimal global subscriptions (3079-3082)
+- **allowed_subscription_kinds**: Per-app whitelist for user filters
+- **Dynamic Updates**: Close and recreate relay subscriptions on filter changes

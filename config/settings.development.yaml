@@ -33,11 +33,12 @@ apps:
       messaging_sender_id: "103876204196"
       app_id: "1:103876204196:web:d7a1a1bebbdf6e6b75b831"
       vapid_public_key: "BPVz4oPf--UKQHFkooAq1SROioo2AmaQ_e98wwjTtsHnfhB_wV2VL1cLzgTZKl3p9c-Ueev_0BNeMIvoCUz2LrM"
-    # K8s: /app/secrets/firebase-nostrpushdemo.json
-    # Local: ./firebase-service-account-nostrpushdemo.json
-    credentials_path: "/app/secrets/firebase-nostrpushdemo.json"
+    # Local development credentials path
+    credentials_path: "./firebase-service-account-nostrpushdemo.json"
     allowed_subscription_kinds: # Kinds this app can subscribe to via user filters
-      - 9
+      - 4     # NIP-4 private DMs
+      - 9     # Custom/Test events (used for testing)
+      - 1059  # NIP-44 gift-wrapped DMs
 
   - name: "universes"
     frontend_config:
@@ -48,15 +49,15 @@ apps:
       messaging_sender_id: "139132462562"
       app_id: "1:139132462562:web:59ef4ec6aab3791cba05bb"
       vapid_public_key: "BNPu0TK2qLDu-TiW09NqNU8QGeQuLSyZ87fPJm9wMwYsIA2bt6Bzi5IfmA0NmhQNa5jaSnH_tsmLEw6t5OMR4H8"
-    # K8s: /app/secrets/firebase-universes.json
-    # Local: ./firebase-service-account-universes.json
-    credentials_path: "/app/secrets/firebase-universes.json"
+    # Local development credentials path
+    credentials_path: "./firebase-service-account-universes.json"
     allowed_subscription_kinds: # Kinds this app can subscribe to via user filters
-      - 1     # Short text notes
       - 3     # Contacts
       - 6     # Reposts
       - 7     # Reactions
+      - 4     # NIP-4 private DMs
       - 30023 # Long-form content
+      - 1059  # NIP-44 gift-wrapped DMs
       - 1111  # Comments/messages in communities (NIP-22)
       - 4552  # Join requests (moderator notifications)
       - 34550 # Community definitions (NIP-72)

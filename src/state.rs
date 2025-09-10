@@ -3,10 +3,13 @@ use crate::{
     crypto::CryptoService,
     error::Result,
     fcm_sender::FcmClient,
+    handlers::CommunityHandler,
     redis_store::{self, RedisPool},
+    subscriptions::SubscriptionManager,
 };
-use nostr_sdk::Keys;
+use nostr_sdk::{Client, Keys, SubscriptionId};
 use std::{collections::{HashMap, HashSet}, env, sync::Arc};
+use tokio::sync::RwLock;
 
 use crate::error::ServiceError;
 use crate::nostr::nip29::{init_nip29_client, Nip29Client};
@@ -20,6 +23,10 @@ pub struct AppState {
     pub service_keys: Option<Keys>,
     pub crypto_service: Option<CryptoService>,
     pub nip29_client: Arc<Nip29Client>,
+    pub nostr_client: Arc<Client>,  // Shared nostr client for direct subscription management
+    pub user_subscriptions: Arc<RwLock<HashMap<String, SubscriptionId>>>,  // filter_hash -> SubscriptionId
+    pub subscription_manager: Arc<SubscriptionManager>,
+    pub community_handler: Arc<CommunityHandler>,
 }
 
 impl AppState {
@@ -69,19 +76,16 @@ impl AppState {
         let mut supported_apps = HashSet::new();
         
         for app_config in settings.apps.iter() {
-            // Determine credentials path - use config or fall back to local convention
-            let credentials_path = app_config.credentials_path
-                .as_ref()
-                .map(|p| p.clone())
-                .unwrap_or_else(|| format!("./firebase-service-account-{}.json", app_config.name));
+            // Use the credentials path from configuration (required field)
+            let credentials_path = &app_config.credentials_path;
             
             // Set GOOGLE_APPLICATION_CREDENTIALS for the library to use
-            env::set_var("GOOGLE_APPLICATION_CREDENTIALS", &credentials_path);
+            env::set_var("GOOGLE_APPLICATION_CREDENTIALS", credentials_path);
             tracing::info!("Setting credentials path for app '{}': {}", app_config.name, credentials_path);
             
             // Create FCM client for this app with its specific project_id
             let fcm_settings = crate::config::FcmSettings {
-                project_id: app_config.fcm_project_id.clone(),
+                project_id: app_config.frontend_config.project_id.clone(),
             };
             
             match FcmClient::new(&fcm_settings) {
@@ -89,7 +93,7 @@ impl AppState {
                     fcm_clients.insert(app_config.name.clone(), Arc::new(client));
                     supported_apps.insert(app_config.name.clone());
                     tracing::info!("Initialized FCM client for app '{}' with project '{}'", 
-                                 app_config.name, app_config.fcm_project_id);
+                                 app_config.name, app_config.frontend_config.project_id);
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize FCM client for app {} (credentials: {}): {}", 
@@ -119,6 +123,16 @@ impl AppState {
             tracing::warn!("No FCM clients initialized. Push notifications will not work.");
         }
         
+        // Initialize subscription manager and community handler
+        let subscription_manager = Arc::new(SubscriptionManager::new());
+        let community_handler = Arc::new(CommunityHandler::new());
+        
+        // Get the nostr client from nip29_client
+        let nostr_client = nip29_client.client();
+        
+        // Initialize the shared user subscriptions map
+        let user_subscriptions = Arc::new(RwLock::new(HashMap::new()));
+        
         Ok(AppState {
             settings,
             redis_pool,
@@ -127,6 +141,10 @@ impl AppState {
             service_keys,
             crypto_service,
             nip29_client,
+            nostr_client,
+            user_subscriptions,
+            subscription_manager,
+            community_handler,
         })
     }
 }

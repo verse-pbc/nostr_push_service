@@ -1,6 +1,6 @@
 // Firebase Messaging Service Worker
 // This file must be at the root of your domain for Web Push to work
-// Version: 1.0.4 - Force cache update 2024-11-25-1648
+// Version: 1.0.5 - Fixed firebase-config.js endpoint 2025-01-10
 
 // SW to Page log bridge
 const swLog = async (level, text) => {
@@ -41,7 +41,7 @@ if (firebaseConfigOk) {
 }
 
 // Cache version - increment this to force cache update
-const CACHE_VERSION = 'v1.0.4-1648';
+const CACHE_VERSION = 'v1.0.5-2025-01-10';
 const CACHE_NAME = `nostr-push-${CACHE_VERSION}`;
 
 // Service worker lifecycle management

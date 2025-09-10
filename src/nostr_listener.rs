@@ -1,252 +1,369 @@
 use crate::{
     error::{Result, ServiceError},
     event_handler::EventContext,
+    redis_store,
     state::AppState,
+    subscriptions::SubscriptionManager,
 };
 use nostr_sdk::prelude::*;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-pub async fn run(
+pub struct NostrListener {
     state: Arc<AppState>,
-    event_tx: Sender<(Box<Event>, EventContext)>,
-    token: CancellationToken,
-) -> Result<()> {
-    info!("Starting Nostr listener...");
+    client: Arc<Client>,
+    subscription_manager: Arc<SubscriptionManager>,
+    active_subscription_id: Arc<RwLock<Option<SubscriptionId>>>,
+}
 
-    let service_keys = state
-        .service_keys
-        .clone()
-        .ok_or_else(|| {
-            ServiceError::Internal("Nostr service keys not configured".to_string())
-        })?;
-    let service_pubkey = service_keys.public_key();
-
-    // Get the shared Nostr client from AppState (via Nip29Client)
-    let client = state.nip29_client.client();
-
-    // Ensure the client is connected (Nip29Client::new should handle this, but double-check)
-    if client.relays().await.is_empty() || !client.relays().await.values().any(|s| s.is_connected())
-    {
-        warn!("Nostr client from AppState is not connected or has no relays. Attempting to connect...");
-        // Use the relay URL from settings if available, otherwise error
-        let relay_url_str = &state.settings.nostr.relay_url;
-        if !relay_url_str.is_empty() {
-            client.add_relay(relay_url_str.as_str()).await?;
-            client.connect().await;
-            if !client.relays().await.values().any(|s| s.is_connected()) {
-                return Err(ServiceError::Internal(
-                    "Failed to connect the shared Nostr client".to_string(),
-                ));
-            }
-            info!("Shared Nostr client reconnected successfully.");
-        } else {
-            return Err(ServiceError::Internal(
-                "Nostr relay URL missing in settings, cannot connect shared client".to_string(),
-            ));
+impl NostrListener {
+    pub fn new(state: Arc<AppState>) -> Self {
+        let client = state.nip29_client.client();
+        let subscription_manager = state.subscription_manager.clone();
+        
+        Self {
+            state,
+            client,
+            subscription_manager,
+            active_subscription_id: Arc::new(RwLock::new(None)),
         }
-    } else {
-        info!("Using shared Nostr client from AppState.");
     }
-
-    let process_window_duration =
-        Duration::from_secs(state.settings.service.process_window_days as u64 * 24 * 60 * 60);
-    let since_timestamp = Timestamp::now() - process_window_duration;
-
-    let historical_kinds = state
-        .settings
-        .service
-        .listen_kinds
-        .iter()
-        .filter_map(|&k| match u16::try_from(k) {
-            Ok(kind_u16) => Some(Kind::from(kind_u16)),
-            Err(_) => {
-                tracing::warn!("Kind {} from config is too large, skipping.", k);
-                None
-            }
-        })
-        .collect::<Vec<_>>();
     
-
-    let historical_filter = Filter::new()
-        .kinds(historical_kinds.clone())
-        .since(since_timestamp);
-
-    info!(since = %since_timestamp, "Querying historical events...");
-    // For live subscription, look back 3 days to catch NIP-17 DMs with randomized timestamps
-    // NIP-17 randomizes timestamps up to 2 days in the past for privacy
-    let subscription_since = Timestamp::now() - Duration::from_secs(3 * 24 * 60 * 60);
-
-    tokio::select! {
-        biased;
-        _ = token.cancelled() => {
-             info!("Nostr listener cancelled before historical event query.");
-             return Ok(());
+    pub async fn run(
+        &self,
+        event_tx: Sender<(Box<Event>, EventContext)>,
+        token: CancellationToken,
+    ) -> Result<()> {
+        info!("Starting Nostr listener with subscription management...");
+        
+        let service_keys = self.state
+            .service_keys
+            .clone()
+            .ok_or_else(|| {
+                ServiceError::Internal("Nostr service keys not configured".to_string())
+            })?;
+        let service_pubkey = service_keys.public_key();
+        
+        // Ensure the client is connected
+        if !self.is_connected().await {
+            self.ensure_connected().await?;
         }
-        fetch_result = client.fetch_events(historical_filter.clone(), Duration::from_secs(60)) => {
-             match fetch_result {
-                 Ok(historical_events) => {
-                     info!(
-                         count = historical_events.len(),
-                         "Fetched historical events. Processing..."
-                     );
-                     for event in historical_events {
-                         tokio::select! {
-                             biased;
-                             _ = token.cancelled() => {
-                                 info!("Nostr listener cancelled during historical event processing.");
-                                 return Ok(());
-                             }
-                             res = async {
-                                 if event.pubkey == service_pubkey {
-                                     return Ok(());
-                                 }
-                                 let event_id = event.id;
-                                 tokio::select! {
-                                     biased;
-                                     _ = token.cancelled() => {
-                                         info!("Nostr listener cancelled while sending historical event {}.", event_id);
-                                         Err(ServiceError::Cancelled)
-                                     }
-                                     send_res = event_tx.send((Box::new(event), EventContext::Historical)) => {
-                                         if let Err(e) = send_res {
-                                             error!(error = %e, event_id = %event_id, "Failed to send historical event to handler task");
-                                             error!("Event handler channel likely closed, stopping historical processing.");
-                                             Err(ServiceError::Internal(format!(
-                                                 "Event handler channel closed during historical processing: {}", e
-                                             )))
-                                         } else {
-                                            debug!(event_id = %event_id, "Sent historical event to handler");
-                                            Ok(())
-                                         }
-                                     }
-                                 }
-                             } => {
-                                  match res {
-                                      Ok(_) => { /* Event processed or skipped successfully */ }
-                                      Err(ServiceError::Cancelled) => return Ok(()),
-                                      Err(e) => return Err(e),
-                                  }
-                             }
-                         }
-                     }
-                     info!("Finished processing historical events.");
-                 }
-                 Err(e) => {
-                     error!(error = %e, "Failed to query historical events");
-                     warn!("Proceeding without historical events due to query failure.");
-                     if token.is_cancelled() {
-                         info!("Nostr listener cancelled after failed historical event query.");
-                         return Ok(());
-                     }
-                 }
-            }
-        }
+        
+        // Recover existing subscriptions from Redis
+        self.recover_existing_subscriptions().await?;
+        
+        // Process historical events first
+        self.process_historical_events(&event_tx, &service_pubkey, &token).await?;
+        
+        // Subscribe to live events with dynamic filter management
+        self.subscribe_to_live_events(&token).await?;
+        
+        // Main event loop
+        self.process_live_events(event_tx, service_pubkey, token).await?;
+        
+        info!("Nostr listener shutting down.");
+        Ok(())
     }
-
-    info!("Subscribing to live events...");
-    // Use the timestamp from before historical fetch to avoid missing events
-    let live_filter = Filter::new().kinds(historical_kinds.clone()).since(subscription_since);
-    info!("Live filter: kinds={:?}, since={} (3 days ago for NIP-17 compatibility)", 
-          historical_kinds, subscription_since);
-
-    tokio::select! {
-        biased;
-        _ = token.cancelled() => {
-             info!("Nostr listener cancelled before live event subscription.");
-             return Ok(());
+    
+    async fn recover_existing_subscriptions(&self) -> Result<()> {
+        info!("Recovering existing subscriptions from Redis...");
+        
+        // Get all active subscriptions from Redis
+        let all_subscriptions = redis_store::get_all_active_subscriptions(&self.state.redis_pool).await?;
+        
+        if all_subscriptions.is_empty() {
+            info!("No existing subscriptions to recover");
+            return Ok(());
         }
-        sub_result = client.subscribe(live_filter, None) => {
-            if let Err(e) = sub_result {
-                error!(error = %e, "Failed to subscribe to live events");
-                return Err(e.into());
+        
+        let mut recovered_filters = 0;
+        let mut unique_filters = HashSet::new();
+        
+        // Process each subscription
+        for (key, filter_json) in all_subscriptions {
+            // Parse the key format: "subscription:{app}:{pubkey}:{filter_hash}"
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() < 4 {
+                warn!("Invalid subscription key format: {}", key);
+                continue;
             }
-        }
-    }
-
-    info!("Nostr listener subscribed and running.");
-
-    let mut notifications = client.notifications();
-    loop {
-        tokio::select! {
-            biased;
-             _ = token.cancelled() => {
-                 info!("Nostr listener cancellation received. Shutting down...");
-                 break;
-             }
-
-            res = notifications.recv() => {
-                  match res {
-                    Ok(notification) => {
-                        match notification {
-                            nostr_sdk::RelayPoolNotification::Event { event, .. } => {
-                                if event.pubkey == service_pubkey {
-                                    debug!("Skipping event from service account");
-                                    continue;
-                                }
-                                let event_id = event.id;
-                                let event_kind = event.kind;
-
-                                debug!(event_id = %event_id, kind = %event_kind, "Received live event");
-
-                                tokio::select! {
-                                    biased;
-                                    _ = token.cancelled() => {
-                                        info!("Nostr listener cancelled while attempting to send live event {}.", event_id);
-                                        break;
-                                    }
-                                    send_res = event_tx.send((event, EventContext::Live)) => {
-                                        if let Err(e) = send_res {
-                                            tracing::error!(
-                                                "Failed to send event {} to handler channel: {}",
-                                                event_id,
-                                                e
-                                            );
-                                            break;
-                                        } else {
-                                             debug!(event_id = %event_id, "Sent live event to handler");
-                                        }
-                                    }
-                                }
-                            }
-                            nostr_sdk::RelayPoolNotification::Message { relay_url, message } => {
-                                debug!(%relay_url, ?message, "Received message from relay");
-                            }
-                            nostr_sdk::RelayPoolNotification::Shutdown => {
-                                tracing::info!("Nostr client shutdown notification received.");
-                                break;
-                            }
-                            // Commented out potentially removed variants
-                            /*
-                            nostr_sdk::RelayPoolNotification::Stop { .. } => {
-                                tracing::debug!("Received STOP notification");
-                            }
-                             nostr_sdk::RelayPoolNotification::RelayStatus { relay_url, status } => {
-                                tracing::debug!(%relay_url, ?status, "Relay status update");
-                             }
-                             */
-                        }
+            
+            let app = parts[1].to_string();
+            let pubkey_hex = parts[2].to_string();
+            
+            // Parse the filter
+            let filter: Filter = match serde_json::from_value(filter_json.clone()) {
+                Ok(f) => f,
+                Err(e) => {
+                    warn!("Failed to parse filter from Redis: {}", e);
+                    continue;
+                }
+            };
+            
+            // Add to subscription manager
+            let (filter_hash, is_new) = self.subscription_manager
+                .add_user_filter(app.clone(), pubkey_hex.clone(), filter.clone())
+                .await;
+            
+            if is_new {
+                unique_filters.insert(filter_hash.clone());
+                
+                // Create relay subscription for this filter
+                match self.client.subscribe(filter, None).await {
+                    Ok(output) => {
+                        let mut user_subs = self.state.user_subscriptions.write().await;
+                        user_subs.insert(filter_hash.clone(), output.val.clone());
+                        debug!(
+                            filter_hash = &filter_hash[..8],
+                            subscription_id = %output.val,
+                            "Recovered relay subscription"
+                        );
                     }
                     Err(e) => {
-                        // Any error receiving from the notification channel is likely fatal
-                        error!("Error receiving from notification channel: {}. Shutting down listener.", e);
-                        break; // Exit the loop on any receive error
-                        /* Removed specific RecvError check
-                        if matches!(e, tokio::sync::mpsc::error::RecvError) {
-                             error!("Notification channel closed unexpectedly.");
-                             break;
-                         }
-                        */
+                        error!(
+                            filter_hash = &filter_hash[..8],
+                            error = %e,
+                            "Failed to create relay subscription during recovery"
+                        );
+                    }
+                }
+            }
+            
+            recovered_filters += 1;
+        }
+        
+        info!(
+            "Recovered {} subscriptions with {} unique filters",
+            recovered_filters,
+            unique_filters.len()
+        );
+        
+        Ok(())
+    }
+    
+    async fn is_connected(&self) -> bool {
+        let relays = self.client.relays().await;
+        !relays.is_empty() && relays.values().any(|s| s.is_connected())
+    }
+    
+    async fn ensure_connected(&self) -> Result<()> {
+        warn!("Nostr client not connected. Attempting to connect...");
+        let relay_url = &self.state.settings.nostr.relay_url;
+        
+        if relay_url.is_empty() {
+            return Err(ServiceError::Internal(
+                "Nostr relay URL missing in settings".to_string(),
+            ));
+        }
+        
+        self.client.add_relay(relay_url.as_str()).await?;
+        self.client.connect().await;
+        
+        if !self.is_connected().await {
+            return Err(ServiceError::Internal(
+                "Failed to connect to Nostr relay".to_string(),
+            ));
+        }
+        
+        info!("Successfully connected to Nostr relay");
+        Ok(())
+    }
+    
+    async fn process_historical_events(
+        &self,
+        event_tx: &Sender<(Box<Event>, EventContext)>,
+        service_pubkey: &PublicKey,
+        token: &CancellationToken,
+    ) -> Result<()> {
+        let process_window_duration = Duration::from_secs(
+            self.state.settings.service.process_window_days as u64 * 24 * 60 * 60
+        );
+        let since_timestamp = Timestamp::now() - process_window_duration;
+        
+        // Build filter for control kinds only
+        let control_kinds: Vec<Kind> = self.state.settings.service.control_kinds
+            .iter()
+            .filter_map(|&k| u16::try_from(k).ok())
+            .map(Kind::from)
+            .collect();
+        
+        let filter = Filter::new()
+            .kinds(control_kinds)
+            .since(since_timestamp);
+        
+        info!(since = %since_timestamp, "Querying historical control events...");
+        
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                info!("Cancelled before historical event query");
+                return Ok(());
+            }
+            fetch_result = self.client.fetch_events(filter, Duration::from_secs(60)) => {
+                match fetch_result {
+                    Ok(historical_events) => {
+                        info!(count = historical_events.len(), "Processing historical control events...");
+                        
+                        for event in historical_events {
+                            if event.pubkey == *service_pubkey {
+                                continue;
+                            }
+                            
+                            tokio::select! {
+                                biased;
+                                _ = token.cancelled() => {
+                                    info!("Cancelled during historical processing");
+                                    return Ok(());
+                                }
+                                send_res = event_tx.send((Box::new(event), EventContext::Historical)) => {
+                                    if let Err(e) = send_res {
+                                        error!("Failed to send historical event: {}", e);
+                                        return Err(ServiceError::Internal(
+                                            "Event handler channel closed".to_string()
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        
+                        info!("Finished processing historical control events");
+                    }
+                    Err(e) => {
+                        error!("Failed to query historical control events: {}", e);
+                        warn!("Proceeding without historical events");
                     }
                 }
             }
         }
+        
+        Ok(())
     }
-
-    info!("Nostr listener shutting down.");
-    // Do not disconnect the shared client here, let the Nip29Client owner manage its lifecycle
-    Ok(())
+    
+    async fn subscribe_to_live_events(&self, token: &CancellationToken) -> Result<()> {
+        // Subscribe to control kinds and DM kinds for live events
+        // User subscriptions are managed directly by event handlers
+        let control_kinds: Vec<Kind> = self.state.settings.service.control_kinds
+            .iter()
+            .filter_map(|&k| u16::try_from(k).ok())
+            .map(Kind::from)
+            .collect();
+            
+        let dm_kinds: Vec<Kind> = self.state.settings.service.dm_kinds
+            .iter()
+            .filter_map(|&k| u16::try_from(k).ok())
+            .map(Kind::from)
+            .collect();
+        
+        // Combine control and DM kinds
+        let mut all_kinds = control_kinds;
+        all_kinds.extend(dm_kinds);
+        
+        // Look back 2 days to catch both control events and NIP-17 DMs
+        // NIP-17 spec: "randomize created_at in up to two days in the past"
+        let since = Timestamp::now() - Duration::from_secs(2 * 24 * 60 * 60); // 2 days
+        
+        // Use a single filter with all kinds and 2-day lookback
+        let filter = Filter::new()
+            .kinds(all_kinds.clone())
+            .since(since);
+        
+        info!("Subscribing to control kinds and DM kinds for live events... kinds: {:?}", 
+              all_kinds.iter().map(|k| k.as_u16()).collect::<Vec<_>>());
+        
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                info!("Cancelled before live subscription");
+                return Ok(());
+            }
+            sub_result = self.client.subscribe(filter, None) => {
+                match sub_result {
+                    Ok(output) => {
+                        let mut active_sub = self.active_subscription_id.write().await;
+                        *active_sub = Some(output.val);
+                        info!("Successfully subscribed to control kinds and DM kinds");
+                    }
+                    Err(e) => {
+                        error!("Failed to subscribe to control kinds and DM kinds: {}", e);
+                        return Err(e.into());
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    async fn process_live_events(
+        &self,
+        event_tx: Sender<(Box<Event>, EventContext)>,
+        service_pubkey: PublicKey,
+        token: CancellationToken,
+    ) -> Result<()> {
+        let mut notifications = self.client.notifications();
+        
+        info!("Processing live events...");
+        
+        loop {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    info!("Cancellation received, shutting down");
+                    break;
+                }
+                
+                res = notifications.recv() => {
+                    match res {
+                        Ok(notification) => {
+                            match notification {
+                                RelayPoolNotification::Event { event, .. } => {
+                                    if event.pubkey == service_pubkey {
+                                        debug!("Skipping event from service account");
+                                        continue;
+                                    }
+                                    
+                                    let event_id = event.id;
+                                    let event_kind = event.kind;
+                                    
+                                    debug!(event_id = %event_id, kind = %event_kind, "Received live event");
+                                    
+                                    tokio::select! {
+                                        biased;
+                                        _ = token.cancelled() => {
+                                            info!("Cancelled while sending event");
+                                            break;
+                                        }
+                                        send_res = event_tx.send((event, EventContext::Live)) => {
+                                            if let Err(e) = send_res {
+                                                error!("Failed to send live event: {}", e);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                RelayPoolNotification::Message { relay_url, message } => {
+                                    debug!(%relay_url, ?message, "Received relay message");
+                                }
+                                RelayPoolNotification::Shutdown => {
+                                    info!("Received shutdown notification");
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error receiving notification: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
 }

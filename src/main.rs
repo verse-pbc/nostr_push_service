@@ -21,6 +21,12 @@ use nostr_push_service::state; // Assuming Result is pub in error mod
 use nostr_sdk::prelude::Event; // Keep this specific use
 use nostr_sdk::ToBech32;
 
+// Which app's frontend config to serve for the demo frontend
+// Can be overridden with FRONTEND_APP environment variable
+fn get_frontend_app() -> String {
+    std::env::var("FRONTEND_APP").unwrap_or_else(|_| "nostrpushdemo".to_string())
+}
+
 // Reintroduce SimpleTaskTracker
 // NOTE: We are using this custom tracker because the standard
 // `tokio_util::task::TaskTracker` requires tokio-util >= 0.7,
@@ -81,29 +87,40 @@ async fn serve_frontend() -> impl IntoResponse {
     Html(html_with_config)
 }
 
-async fn serve_firebase_config() -> impl IntoResponse {
-    // Get Firebase config from environment or use empty strings (will fallback to test mode)
-    let config = format!(
-        r#"// Firebase configuration for Web Push
-window.firebaseConfig = {{
+async fn serve_firebase_config(state: Arc<state::AppState>) -> impl IntoResponse {
+    // Get the selected frontend app from environment
+    let frontend_app = get_frontend_app();
+    
+    // Find the app config for the frontend app
+    let app_config = state.settings.apps.iter()
+        .find(|app| app.name == frontend_app);
+    
+    let config = match app_config {
+        Some(app) => {
+            format!(
+                r#"// Firebase configuration for Web Push
+const firebaseConfig = {{
     apiKey: "{}",
     authDomain: "{}",
     projectId: "{}",
     storageBucket: "{}",
     messagingSenderId: "{}",
-    appId: "{}",
-    vapidPublicKey: "{}"
+    appId: "{}"
 }};"#,
-        std::env::var("FIREBASE_API_KEY").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_AUTH_DOMAIN").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| 
-            std::env::var("NOSTR_PUSH__FCM__PROJECT_ID").unwrap_or_else(|_| "".to_string())
-        ),
-        std::env::var("FIREBASE_STORAGE_BUCKET").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_MESSAGING_SENDER_ID").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_APP_ID").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_VAPID_PUBLIC_KEY").unwrap_or_else(|_| "".to_string())
-    );
+                app.frontend_config.api_key,
+                app.frontend_config.auth_domain,
+                app.frontend_config.project_id,
+                app.frontend_config.storage_bucket,
+                app.frontend_config.messaging_sender_id,
+                app.frontend_config.app_id
+            )
+        },
+        None => {
+            // Return empty config if app not found
+            r#"// Firebase configuration not found
+const firebaseConfig = {};"#.to_string()
+        }
+    };
     
     (
         StatusCode::OK,
@@ -113,52 +130,49 @@ window.firebaseConfig = {{
 }
 
 async fn serve_service_worker() -> impl IntoResponse {
-    // Get Firebase config from environment
-    let firebase_config = format!(
-        r#"const firebaseConfig = {{
-    apiKey: "{}",
-    authDomain: "{}",
-    projectId: "{}",
-    storageBucket: "{}",
-    messagingSenderId: "{}",
-    appId: "{}"
-}};"#,
-        std::env::var("FIREBASE_API_KEY").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_AUTH_DOMAIN").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| 
-            std::env::var("NOSTR_PUSH__FCM__PROJECT_ID").unwrap_or_else(|_| "".to_string())
-        ),
-        std::env::var("FIREBASE_STORAGE_BUCKET").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_MESSAGING_SENDER_ID").unwrap_or_else(|_| "".to_string()),
-        std::env::var("FIREBASE_APP_ID").unwrap_or_else(|_| "".to_string())
-    );
-    
-    // Inline the config directly into the service worker
+    // Serve the service worker as-is, it will load config from /firebase-config.js
     let sw_content = include_str!("../frontend/firebase-messaging-sw.js");
-    let sw_with_config = sw_content.replace("self.importScripts('/firebase-config.js');", &firebase_config);
     
     (
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/javascript")],
-        sw_with_config,
+        sw_content,
     )
 }
 
-async fn serve_fcm_config() -> impl IntoResponse {
-    let config = json!({
-        "apiKey": std::env::var("FIREBASE_API_KEY").unwrap_or_default(),
-        "authDomain": std::env::var("FIREBASE_AUTH_DOMAIN").unwrap_or_default(),
-        "projectId": std::env::var("FIREBASE_PROJECT_ID").unwrap_or_else(|_| 
-            std::env::var("NOSTR_PUSH__FCM__PROJECT_ID").unwrap_or_default()
-        ),
-        "storageBucket": std::env::var("FIREBASE_STORAGE_BUCKET").unwrap_or_default(),
-        "messagingSenderId": std::env::var("FIREBASE_MESSAGING_SENDER_ID").unwrap_or_default(),
-        "appId": std::env::var("FIREBASE_APP_ID").unwrap_or_default(),
-        "measurementId": std::env::var("FIREBASE_MEASUREMENT_ID").unwrap_or_default(),
-        "vapidPublicKey": std::env::var("FIREBASE_VAPID_PUBLIC_KEY").unwrap_or_default()
-    });
+async fn serve_fcm_config(state: Arc<state::AppState>) -> impl IntoResponse {
+    // Serve the frontend config for the demo app specified by FRONTEND_APP env var
+    // This endpoint is only for the demo frontend - real apps would have their own config
     
-    Json(config)
+    let frontend_app = get_frontend_app();
+    
+    // Find the app config for the frontend app
+    let app_config = state.settings.apps.iter()
+        .find(|app| app.name == frontend_app);
+    
+    match app_config {
+        Some(app) => {
+            let config = json!({
+                "appName": app.name,  // Include the app name for frontend to use in tags
+                "apiKey": app.frontend_config.api_key,
+                "authDomain": app.frontend_config.auth_domain,
+                "projectId": app.frontend_config.project_id,
+                "storageBucket": app.frontend_config.storage_bucket,
+                "messagingSenderId": app.frontend_config.messaging_sender_id,
+                "appId": app.frontend_config.app_id,
+                "measurementId": app.frontend_config.measurement_id,
+                "vapidPublicKey": app.frontend_config.vapid_public_key
+            });
+            
+            tracing::info!("Serving FCM config for demo frontend app: {}", frontend_app);
+            Json(config)
+        },
+        None => {
+            tracing::error!("Frontend app '{}' not found in configuration", frontend_app);
+            // Return empty config if app not found
+            Json(json!({}))
+        }
+    }
 }
 
 // Removed serve_nostr_bundle - using CDN version for demo
@@ -191,11 +205,14 @@ async fn serve_icon_512() -> impl IntoResponse {
 }
 
 async fn run_server(app_state: Arc<state::AppState>, token: CancellationToken) {
+    let app_state_clone = app_state.clone();
+    let app_state_clone2 = app_state.clone();
+    
     let app = Router::new()
         .route("/", get(serve_frontend))
-        .route("/firebase-config.js", get(serve_firebase_config))
+        .route("/firebase-config.js", get(move || serve_firebase_config(app_state_clone2.clone())))
         .route("/firebase-messaging-sw.js", get(serve_service_worker))
-        .route("/config/fcm.json", get(serve_fcm_config))
+        .route("/config/fcm.json", get(move || serve_fcm_config(app_state_clone.clone())))
         // nostr.bundle.js now served from CDN
         .route("/manifest.json", get(serve_manifest))
         .route("/icon-192x192.png", get(serve_icon_192))
@@ -267,7 +284,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token_nostr = token.clone();
     let tx_nostr = nostr_event_tx.clone();
     tracker.spawn(async move {
-        if let Err(e) = nostr_listener::run(state_nostr, tx_nostr, token_nostr).await {
+        let listener = nostr_listener::NostrListener::new(state_nostr);
+        if let Err(e) = listener.run(tx_nostr, token_nostr).await {
             tracing::error!("Nostr listener failed: {}", e);
         }
         tracing::info!("Nostr listener task finished.");

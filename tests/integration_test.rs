@@ -82,8 +82,18 @@ async fn setup_test_environment() -> Result<(
     // Configure the nostrpushdemo app for tests
     settings.apps = vec![nostr_push_service::config::AppConfig {
         name: "nostrpushdemo".to_string(),
-        fcm_project_id: "test-project".to_string(),
-        credentials_path: None,
+        frontend_config: nostr_push_service::config::FrontendConfig {
+            api_key: "test-api-key".to_string(),
+            auth_domain: "test.firebaseapp.com".to_string(),
+            project_id: "test-project".to_string(),
+            storage_bucket: "test.firebasestorage.app".to_string(),
+            messaging_sender_id: "123456".to_string(),
+            app_id: "1:123456:web:test".to_string(),
+            measurement_id: None,
+            vapid_public_key: "test-vapid-key".to_string(),
+        },
+        credentials_path: "./test-firebase-credentials.json".to_string(),
+        allowed_subscription_kinds: vec![],
     }];
 
     // Add a longer delay to allow the Redis service container to fully initialize in CI
@@ -130,6 +140,14 @@ async fn setup_test_environment() -> Result<(
     fcm_clients.insert("nostrpushdemo".to_string(), fcm_client);
     supported_apps.insert("nostrpushdemo".to_string());
     
+    let (subscription_manager, community_handler) = common::create_default_handlers();
+    
+    // Get the nostr client from nip29_client  
+    let nostr_client = nip29_client.client();
+    
+    // Initialize the shared user subscriptions map
+    let user_subscriptions = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    
     let app_state = nostr_push_service::state::AppState {
         settings,
         redis_pool,
@@ -138,6 +156,10 @@ async fn setup_test_environment() -> Result<(
         service_keys: Some(test_service_keys.clone()),
         crypto_service: Some(nostr_push_service::crypto::CryptoService::new(test_service_keys)),
         nip29_client: Arc::new(nip29_client), // Add initialized Nip29Client
+        nostr_client,
+        user_subscriptions,
+        subscription_manager,
+        community_handler,
     };
 
     Ok((
@@ -197,7 +219,8 @@ async fn test_event_handling() -> Result<()> {
     let listener_token = service_token.clone();
     let listener_handle = tokio::spawn(async move {
         eprintln!("DEBUG: Starting nostr_listener task");
-        if let Err(e) = nostr_listener::run(listener_state, event_tx, listener_token).await {
+        let listener = nostr_listener::NostrListener::new(listener_state);
+        if let Err(e) = listener.run(event_tx, listener_token).await {
             eprintln!("Nostr listener task error: {}", e);
         }
         eprintln!("DEBUG: nostr_listener task ended");

@@ -542,7 +542,7 @@ pub async fn get_all_users_with_subscriptions(pool: &RedisPool) -> Result<Vec<Pu
     // Get all subscription keys across ALL apps
     let pattern = "app:*:subscriptions:*";
     let keys: Vec<String> = redis::cmd("KEYS")
-        .arg(&pattern)
+        .arg(pattern)
         .query_async(&mut *conn)
         .await
         .map_err(ServiceError::Redis)?;
@@ -550,7 +550,7 @@ pub async fn get_all_users_with_subscriptions(pool: &RedisPool) -> Result<Vec<Pu
     // Also check timestamped subscriptions
     let ts_pattern = "app:*:subscriptions_ts:*";
     let ts_keys: Vec<String> = redis::cmd("KEYS")
-        .arg(&ts_pattern)
+        .arg(ts_pattern)
         .query_async(&mut *conn)
         .await
         .map_err(ServiceError::Redis)?;
@@ -564,7 +564,7 @@ pub async fn get_all_users_with_subscriptions(pool: &RedisPool) -> Result<Vec<Pu
     for key in all_keys {
         // Extract pubkey hex from the end of the key
         // Keys are in format "app:{app}:subscriptions:{pubkey}" or "app:{app}:subscriptions_ts:{pubkey}"
-        if let Some(hex) = key.split(':').last() {
+        if let Some(hex) = key.split(':').next_back() {
             if let Ok(pubkey) = PublicKey::from_hex(hex) {
                 pubkeys.insert(pubkey);
             }
@@ -852,6 +852,7 @@ pub async fn add_subscription_by_filter(
     
     // Store in user's subscription set using hash as the member
     let subscriptions_key = format!("app:{}:subscriptions:{}", app, pubkey.to_hex());
+    
     redis::cmd("SADD")
         .arg(&subscriptions_key)
         .arg(&filter_hash)
@@ -929,6 +930,7 @@ pub async fn get_subscriptions_by_hash(
     
     // Get all filter hashes for this user
     let subscriptions_key = format!("app:{}:subscriptions:{}", app, pubkey.to_hex());
+    
     let hashes: Vec<String> = redis::cmd("SMEMBERS")
         .arg(&subscriptions_key)
         .query_async(&mut *conn)
@@ -959,6 +961,43 @@ pub async fn get_subscriptions_by_hash(
     }
     
     Ok(filters)
+}
+
+/// Get all active subscriptions from all users and apps for recovery on startup
+pub async fn get_all_active_subscriptions(
+    pool: &RedisPool,
+) -> Result<HashMap<String, serde_json::Value>> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+    
+    // Find all subscription keys across all apps and users
+    let pattern = "subscription:*:*:*";
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(pattern)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+    
+    let mut subscriptions = HashMap::new();
+    
+    for key in keys {
+        // Get the filter data
+        let filter_json: Option<String> = redis::cmd("GET")
+            .arg(&key)
+            .query_async(&mut *conn)
+            .await
+            .map_err(ServiceError::Redis)?;
+        
+        if let Some(json_str) = filter_json {
+            if let Ok(filter) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                subscriptions.insert(key, filter);
+            }
+        }
+    }
+    
+    Ok(subscriptions)
 }
 
 /// Get all subscriptions across all apps using hash-based storage  
