@@ -1001,10 +1001,11 @@ pub async fn get_all_active_subscriptions(
 }
 
 /// Get all subscriptions across all apps using hash-based storage  
+/// Returns tuples of (app, filter, timestamp)
 pub async fn get_all_subscriptions_by_hash(
     pool: &RedisPool,
     pubkey: &PublicKey,
-) -> Result<Vec<(serde_json::Value, u64)>> {
+) -> Result<Vec<(String, serde_json::Value, u64)>> {
     let mut conn = pool
         .get()
         .await
@@ -1048,7 +1049,7 @@ pub async fn get_all_subscriptions_by_hash(
                             data.get("filter").cloned(),
                             data.get("timestamp").and_then(|t| t.as_u64())
                         ) {
-                            all_filters.push((filter, timestamp));
+                            all_filters.push((app.to_string(), filter, timestamp));
                         }
                     }
                 }
