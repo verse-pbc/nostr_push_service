@@ -305,10 +305,20 @@ mod tests {
     use redis::Client;
     
     async fn get_test_connection() -> Option<ConnectionManager> {
-        // Try to connect to local Redis for testing
+        use tokio::time::{timeout, Duration};
+
         if let Ok(client) = Client::open("redis://127.0.0.1:6379") {
-            if let Ok(conn) = ConnectionManager::new(client).await {
-                return Some(conn);
+            // Timeout after 2 seconds to fail fast when Redis unavailable
+            match timeout(Duration::from_secs(2), ConnectionManager::new(client)).await {
+                Ok(Ok(conn)) => return Some(conn),
+                Ok(Err(_)) => {
+                    eprintln!("Redis connection failed - start Redis with: redis-server");
+                    return None;
+                }
+                Err(_) => {
+                    eprintln!("Redis connection timeout - is Redis running? Start with: redis-server");
+                    return None;
+                }
             }
         }
         None

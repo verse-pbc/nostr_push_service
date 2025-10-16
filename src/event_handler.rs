@@ -1188,6 +1188,160 @@ async fn send_notification_to_user(
     Ok(())
 }
 
+/// Send notification to user for a specific app only.
+/// This is used for custom subscriptions that should only trigger notifications
+/// to the app where the subscription was created.
+#[instrument(skip_all, fields(target_pubkey = %target_pubkey.to_string(), app = %app))]
+async fn send_notification_to_user_for_app(
+    state: &AppState,
+    event: &Event,
+    target_pubkey: &PublicKey,
+    app: &str,
+    token: CancellationToken,
+) -> Result<()> {
+    let event_id = event.id;
+
+    // Get tokens only for the specific app
+    let tokens = tokio::select! {
+        biased;
+        _ = token.cancelled() => {
+            info!(event_id = %event_id, target_pubkey = %target_pubkey, app = %app, "Cancelled while fetching tokens.");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+        res = redis_store::get_tokens_for_pubkey_with_app(&state.redis_pool, app, target_pubkey) => {
+            res?
+        }
+    };
+    
+    if tokens.is_empty() {
+        info!(
+            event_id = %event_id, 
+            target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+            app = %app,
+            "No FCM tokens registered for recipient in app - skipping notification"
+        );
+        return Ok(());
+    }
+    
+    info!(
+        event_id = %event_id, 
+        target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+        app = %app,
+        token_count = tokens.len(),
+        "Found FCM tokens for recipient in app"
+    );
+
+    // Get the FCM client for this app
+    let fcm_client = match state.fcm_clients.get(app) {
+        Some(client) => client,
+        None => {
+            warn!(event_id = %event_id, app = %app, "No FCM client configured for app - cannot send notification");
+            return Ok(());
+        }
+    };
+
+    info!(event_id = %event_id, target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()), "Creating FCM payload for notification");
+    let payload = create_fcm_payload(event, target_pubkey)?;
+
+    info!(
+        event_id = %event_id,
+        target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+        app = %app,
+        token_count = tokens.len(),
+        "Attempting to send FCM notification for app"
+    );
+    
+    let results = tokio::select! {
+        biased;
+        _ = token.cancelled() => {
+            info!(event_id = %event_id, target_pubkey = %target_pubkey, app = %app, "Cancelled during FCM send batch.");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+        send_result = fcm_client.send_batch(&tokens, payload) => {
+            send_result
+        }
+    };
+    
+    info!(
+        event_id = %event_id,
+        target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+        app = %app,
+        results_count = results.len(),
+        "FCM send completed"
+    );
+
+    trace!(event_id = %event_id, target_pubkey = %target_pubkey, app = %app, "Handling FCM results");
+    let mut tokens_to_remove = Vec::new();
+    let mut success_count = 0;
+    
+    for (fcm_token, result) in results {
+        if token.is_cancelled() {
+            info!(event_id = %event_id, target_pubkey = %target_pubkey, app = %app, "Cancelled while processing FCM results.");
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+
+        let truncated_token = &fcm_token[..8.min(fcm_token.len())];
+
+        match result {
+            Ok(_) => {
+                success_count += 1;
+                trace!(target_pubkey = %target_pubkey, app = %app, token_prefix = truncated_token, "Successfully sent notification");
+            }
+            Err(fcm_sender::FcmError::TokenNotRegistered) => {
+                warn!(target_pubkey = %target_pubkey, app = %app, token_prefix = truncated_token, "Token invalid/unregistered, marking for removal.");
+                tokens_to_remove.push(fcm_token);
+            }
+            Err(e) => {
+                error!(
+                    target_pubkey = %target_pubkey, app = %app, token_prefix = truncated_token, error = %e, error_debug = ?e,
+                    "FCM send failed for token"
+                );
+            }
+        }
+    }
+    
+    info!(
+        event_id = %event_id,
+        target_pubkey = %target_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
+        app = %app,
+        success_count,
+        failed_count = tokens_to_remove.len(),
+        "FCM notification send summary"
+    );
+
+    if !tokens_to_remove.is_empty() {
+        debug!(event_id = %event_id, target_pubkey = %target_pubkey, app = %app, count = tokens_to_remove.len(), "Removing invalid tokens from app");
+        for fcm_token_to_remove in tokens_to_remove {
+            if token.is_cancelled() {
+                info!(event_id = %event_id, target_pubkey = %target_pubkey, app = %app, "Cancelled while removing invalid tokens.");
+                return Err(crate::error::ServiceError::Cancelled);
+            }
+            let truncated_token = &fcm_token_to_remove[..8.min(fcm_token_to_remove.len())];
+            if let Err(e) = redis_store::remove_token_with_app(
+                &state.redis_pool,
+                app,
+                target_pubkey,
+                &fcm_token_to_remove,
+            )
+            .await
+            {
+                error!(
+                    target_pubkey = %target_pubkey, app = %app, token_prefix = truncated_token, error = %e,
+                    "Failed to remove invalid token from app"
+                );
+            } else {
+                info!(target_pubkey = %target_pubkey, app = %app, token_prefix = truncated_token, "Removed invalid token from app");
+            }
+        }
+    } else {
+        trace!(event_id = %event_id, target_pubkey = %target_pubkey, app = %app, "No invalid tokens to remove");
+    }
+    
+    trace!(event_id = %event_id, target_pubkey = %target_pubkey, app = %app, "Finished sending notification to app");
+
+    Ok(())
+}
+
 
 pub async fn handle_custom_subscriptions(
     state: &AppState,
@@ -1230,26 +1384,81 @@ pub async fn handle_custom_subscriptions(
 
         processed_users.insert(user_pubkey);
 
-        // Skip if user has no tokens (check all namespaces)
-        let tokens = redis_store::get_all_tokens_for_pubkey(&state.redis_pool, &user_pubkey).await?;
-        if tokens.is_empty() {
+        // Get tokens grouped by app to enable per-app cleanup
+        let tokens_by_app = redis_store::get_tokens_by_app_for_pubkey(&state.redis_pool, &user_pubkey).await?;
+        if tokens_by_app.is_empty() {
             info!(event_id = %event.id, user = %user_pubkey.to_hex(), "User has no tokens, skipping");
             continue;
         }
         
-        info!(event_id = %event.id, user = %user_pubkey.to_hex(), "User has {} tokens", tokens.len());
+        let total_tokens: usize = tokens_by_app.values().map(|v| v.len()).sum();
+        info!(event_id = %event.id, user = %user_pubkey.to_hex(), "User has {} tokens across {} apps", total_tokens, tokens_by_app.len());
 
         // Get user's subscriptions with timestamps from ALL app namespaces using hash-based storage
-        // This ensures users receive notifications regardless of which app they used to register subscriptions
+        // Now includes app context to properly route notifications
         let subscriptions_with_timestamps = redis_store::get_all_subscriptions_by_hash(&state.redis_pool, &user_pubkey).await?;
         
         info!(event_id = %event.id, user = %user_pubkey.to_hex(), "User has {} subscriptions", subscriptions_with_timestamps.len());
 
         // Check if event matches any subscription filter AND was created after subscription
-        let mut matched = false;
+        // Track which app(s) have matching subscriptions
+        let mut matched_app: Option<String> = None;
         let event_timestamp = event.created_at.as_u64();
+        let user_pubkey_hex = user_pubkey.to_hex();
         
-        for (filter_value, subscription_timestamp) in subscriptions_with_timestamps {
+        for (app, filter_value, subscription_timestamp) in subscriptions_with_timestamps {
+            // Lazy cleanup: If user has no tokens for this app, remove the subscription
+            if !tokens_by_app.contains_key(&app) {
+                info!(
+                    event_id = %event.id, 
+                    user = %user_pubkey_hex, 
+                    app = %app, 
+                    "User has subscription but no tokens for app - performing lazy cleanup"
+                );
+                
+                // Remove the subscription from Redis
+                if let Err(e) = redis_store::remove_subscription_by_filter(
+                    &state.redis_pool, 
+                    &app, 
+                    &user_pubkey, 
+                    &filter_value
+                ).await {
+                    warn!(
+                        event_id = %event.id,
+                        user = %user_pubkey_hex,
+                        app = %app,
+                        error = %e,
+                        "Failed to remove orphaned subscription during lazy cleanup"
+                    );
+                }
+                
+                // Also remove from subscription manager if we can parse the filter
+                if let Ok(filter) = serde_json::from_value::<Filter>(filter_value.clone()) {
+                    let filter_hash = SubscriptionManager::compute_filter_hash(&filter);
+                    
+                    // Remove from subscription manager and check if it was the last reference
+                    let was_removed = state.subscription_manager
+                        .remove_user_filter(&app, &user_pubkey_hex, &filter_hash)
+                        .await;
+                    
+                    // If the filter was completely removed (ref_count reached 0), unsubscribe from relay
+                    if was_removed {
+                        let mut user_subs = state.user_subscriptions.write().await;
+                        if let Some(subscription_id) = user_subs.remove(&filter_hash) {
+                            state.nostr_client.unsubscribe(&subscription_id).await;
+                            info!(
+                                event_id = %event.id,
+                                filter_hash = &filter_hash[..8],
+                                subscription_id = %subscription_id,
+                                "Unsubscribed from relay during lazy cleanup (no more users for this filter)"
+                            );
+                        }
+                    }
+                }
+                
+                continue; // Skip to next subscription
+            }
+            
             // For Live events: always check timestamps - don't send notifications for events that occurred before subscription
             // For Historical events: also check timestamps during replay
             // Use strict > (i.e., skip if <=) as per best practice to avoid edge duplicates
@@ -1275,21 +1484,22 @@ pub async fn handle_custom_subscriptions(
             };
 
             if filter.match_event(event) {
-                trace!(event_id = %event.id, user = %user_pubkey, "Event matches subscription filter and timestamp");
-                matched = true;
+                trace!(event_id = %event.id, user = %user_pubkey, app = %app, "Event matches subscription filter and timestamp");
+                matched_app = Some(app);
                 break; // One match is enough
             }
         }
 
-        if matched {
+        if let Some(app) = matched_app {
             info!(
                 event_id = %event.id,
                 user_npub = %user_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
                 sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
-                "Sending notification via custom subscription"
+                app = %app,
+                "Sending notification via custom subscription to specific app"
             );
             if let Err(e) =
-                send_notification_to_user(state, event, &user_pubkey, token.clone()).await
+                send_notification_to_user_for_app(state, event, &user_pubkey, &app, token.clone()).await
             {
                 if matches!(e, crate::error::ServiceError::Cancelled) {
                     return Err(e);

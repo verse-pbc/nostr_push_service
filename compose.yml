@@ -10,7 +10,8 @@ services:
       # Nostr settings
       - NOSTR_PUSH__NOSTR__RELAY_URL=ws://host.docker.internal:8080
       # Service identity private key (used as client signer)
-      - NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX=6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e
+      # WARNING: This is a test key (all zeros ending in 1) - NEVER use in production!
+      - NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX=0000000000000000000000000000000000000000000000000000000000000001
       # Redis settings - Points to the Redis service below
       - NOSTR_PUSH__REDIS__URL=redis://redis:6379
       # FCM settings - REPLACE with your project ID
