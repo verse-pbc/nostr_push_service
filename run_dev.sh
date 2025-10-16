@@ -42,7 +42,7 @@ echo "📝 Configuration:"
 echo "  - Environment: development (using settings.development.yaml)"
 echo "  - Frontend App: $FRONTEND_APP"
 echo "  - Server: http://localhost:8000"
-echo "  - Relay: wss://communities.nos.social"
+echo "  - Relay: ${NOSTR_PUSH__NOSTR__RELAY_URL:-wss://communities.nos.social}"
 echo "  - Redis: localhost:6379"
 echo ""
 echo "🌐 Starting Nostr Push Service..."
@@ -54,6 +54,11 @@ export NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX=$SERVICE_PRIVATE_KEY
 export REDIS_URL="redis://localhost:6379"
 export RUST_LOG="info"
 export FRONTEND_APP
+
+# Allow relay URL override via environment variable
+if [ -n "$NOSTR_PUSH__NOSTR__RELAY_URL" ]; then
+    echo "  - Using custom relay: $NOSTR_PUSH__NOSTR__RELAY_URL"
+fi
 
 # APP_ENV defaults to development in the code, so no need to set it
 
