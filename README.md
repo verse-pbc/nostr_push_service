@@ -93,6 +93,36 @@ Visit `http://localhost:8000/` for a test interface that demonstrates:
 3. **Redis** stores pubkey→token mappings with app isolation
 4. **FCM** delivers push notifications to registered devices
 
+## NIP-29 Group Support
+
+The service supports NIP-29 relay-based groups with membership validation:
+
+### Group Membership Validation
+- Validates group membership before sending notifications for group events (h-tag)
+- Queries relay for kind 39002 (group members) events
+- Caches membership data (default: 5 minutes) to reduce relay queries
+- Supports both managed and unmanaged groups
+
+### Custom Subscriptions for Groups
+Users can subscribe to group messages via custom filters:
+```json
+{
+  "kinds": [9],
+  "#h": ["group-id"]
+}
+```
+
+### Automatic Cleanup
+- Orphaned subscriptions automatically removed when membership check fails
+- Only removes subscriptions specific to that single group (safe for multi-group filters)
+- Self-healing without monitoring moderation events
+
+### Relay Requirements
+Your NIP-29 relay must:
+- Publish kind 39002 events (group members list) signed by relay key
+- Publish kind 39001 events (group admins) for broadcast validation
+- Support standard NIP-29 group management events
+
 ## Security
 
 - All tokens must be NIP-44 encrypted (plaintext rejected)

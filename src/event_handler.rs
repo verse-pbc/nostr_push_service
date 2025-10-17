@@ -1405,8 +1405,8 @@ async fn check_subscriptions_for_matching_users(
                 continue;
             }
 
-            // Parse filter
-            let filter: Filter = match serde_json::from_value(filter_value) {
+            // Parse filter (clone filter_value since we might need it later for cleanup)
+            let filter: Filter = match serde_json::from_value(filter_value.clone()) {
                 Ok(f) => f,
                 Err(_) => continue,
             };
@@ -1420,7 +1420,44 @@ async fn check_subscriptions_for_matching_users(
                             debug!(event_id = %event.id, user = %user_pubkey_hex, group_id = %gid, "User is group member with matching subscription");
                         }
                         Ok(false) => {
-                            debug!(event_id = %event.id, user = %user_pubkey_hex, group_id = %gid, "User not a group member, skipping");
+                            debug!(event_id = %event.id, user = %user_pubkey_hex, group_id = %gid, "User not a group member - checking if subscription is specific to this group");
+
+                            // Check if filter is specific to THIS group only
+                            // Safe to remove only if filter targets exactly one h-tag matching this group
+                            let h_tag_key = SingleLetterTag::lowercase(Alphabet::H);
+                            let is_specific_to_this_group = if let Some(h_values) = filter.generic_tags.get(&h_tag_key) {
+                                h_values.len() == 1 && h_values.contains(gid)
+                            } else {
+                                false
+                            };
+
+                            if is_specific_to_this_group {
+                                info!(event_id = %event.id, user = %user_pubkey_hex, group_id = %gid, "Removing orphaned group subscription (user not a member)");
+
+                                // Remove subscription from Redis
+                                let _ = redis_store::remove_subscription_by_filter(
+                                    &state.redis_pool,
+                                    &app,
+                                    &user_pubkey,
+                                    &filter_value
+                                ).await;
+
+                                // Remove from subscription manager
+                                let filter_hash = SubscriptionManager::compute_filter_hash(&filter);
+                                let was_removed = state.subscription_manager.remove_user_filter(&app, &user_pubkey_hex, &filter_hash).await;
+
+                                // Unsubscribe from relay if no one else needs this filter
+                                if was_removed {
+                                    let mut user_subs = state.user_subscriptions.write().await;
+                                    if let Some(subscription_id) = user_subs.remove(&filter_hash) {
+                                        state.nostr_client.unsubscribe(&subscription_id).await;
+                                        info!(event_id = %event.id, filter_hash = &filter_hash[..8], "Unsubscribed from relay after removing orphaned group subscription");
+                                    }
+                                }
+                            } else {
+                                debug!(event_id = %event.id, user = %user_pubkey_hex, "Filter targets multiple groups or no specific h-tag - keeping subscription");
+                            }
+
                             break;
                         }
                         Err(e) => {
