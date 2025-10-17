@@ -901,100 +901,8 @@ async fn handle_group_message(
         }
     }
 
-    // Check custom subscriptions for this group
-    // This allows users to subscribe to group messages via filters like {kinds: [9], #h: ["group-id"]}
-    debug!(event_id = %event.id, %group_id, "Checking custom subscriptions for group");
-
-    let users_with_subscriptions = redis_store::get_all_users_with_subscriptions(&state.redis_pool).await?;
-    debug!(event_id = %event.id, users_count = users_with_subscriptions.len(), "Found users with subscriptions");
-
-    for user_pubkey in users_with_subscriptions {
-        if token.is_cancelled() {
-            info!(event_id = %event.id, "Cancelled during group custom subscription processing");
-            return Err(crate::error::ServiceError::Cancelled);
-        }
-
-        // Skip if this is the sender
-        if user_pubkey == event.pubkey {
-            continue;
-        }
-
-        // Get tokens grouped by app
-        let tokens_by_app = redis_store::get_tokens_by_app_for_pubkey(&state.redis_pool, &user_pubkey).await?;
-        if tokens_by_app.is_empty() {
-            continue;
-        }
-
-        // Get user's subscriptions
-        let subscriptions_with_timestamps = redis_store::get_all_subscriptions_by_hash(&state.redis_pool, &user_pubkey).await?;
-
-        let event_timestamp = event.created_at.as_u64();
-        let user_pubkey_hex = user_pubkey.to_hex();
-
-        for (app, filter_value, subscription_timestamp) in subscriptions_with_timestamps {
-            // Lazy cleanup
-            if !tokens_by_app.contains_key(&app) {
-                if let Err(e) = redis_store::remove_subscription_by_filter(
-                    &state.redis_pool,
-                    &app,
-                    &user_pubkey,
-                    &filter_value
-                ).await {
-                    warn!(event_id = %event.id, user = %user_pubkey_hex, app = %app, error = %e, "Failed to remove orphaned subscription");
-                }
-
-                if let Ok(filter) = serde_json::from_value::<Filter>(filter_value.clone()) {
-                    let filter_hash = SubscriptionManager::compute_filter_hash(&filter);
-                    let was_removed = state.subscription_manager.remove_user_filter(&app, &user_pubkey_hex, &filter_hash).await;
-
-                    if was_removed {
-                        let mut user_subs = state.user_subscriptions.write().await;
-                        if let Some(subscription_id) = user_subs.remove(&filter_hash) {
-                            state.nostr_client.unsubscribe(&subscription_id).await;
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // Check timestamp
-            if event_timestamp <= subscription_timestamp {
-                continue;
-            }
-
-            // Parse filter
-            let filter: Filter = match serde_json::from_value(filter_value) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-
-            // Check if filter matches
-            if filter.match_event(event) {
-                // Verify user is a group member
-                match state.nip29_client.is_group_member(group_id, &user_pubkey).await {
-                    Ok(true) => {
-                        debug!(event_id = %event.id, user = %user_pubkey_hex, %group_id, "User is group member with matching subscription");
-
-                        if let Err(e) = send_notification_to_user_for_app(state, event, &user_pubkey, &app, token.clone()).await {
-                            if matches!(e, crate::error::ServiceError::Cancelled) {
-                                return Err(e);
-                            }
-                            error!(event_id = %event.id, user = %user_pubkey_hex, error = %e, "Failed to send group subscription notification");
-                        }
-                        break; // One match per user is enough
-                    }
-                    Ok(false) => {
-                        debug!(event_id = %event.id, user = %user_pubkey_hex, %group_id, "User not a group member, skipping subscription");
-                        break; // Not a member, don't check other filters for this user
-                    }
-                    Err(e) => {
-                        warn!(event_id = %event.id, user = %user_pubkey_hex, error = %e, "Failed to check group membership");
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    // Check custom subscriptions for this group with membership validation
+    check_subscriptions_for_matching_users(state, event, Some(group_id), token).await?;
 
     debug!(event_id = %event.id, "Finished handling group message/reply");
     Ok(())
@@ -1433,6 +1341,109 @@ async fn send_notification_to_user_for_app(
 }
 
 
+/// Check subscriptions for users and send notifications if filters match.
+///
+/// If group_id is provided, validates group membership before sending notifications.
+/// This is used for NIP-29 group events where only members should receive notifications.
+async fn check_subscriptions_for_matching_users(
+    state: &AppState,
+    event: &Event,
+    group_id: Option<&str>,
+    token: CancellationToken,
+) -> Result<()> {
+    let users_with_subscriptions =
+        redis_store::get_all_users_with_subscriptions(&state.redis_pool).await?;
+
+    for user_pubkey in users_with_subscriptions {
+        if token.is_cancelled() {
+            return Err(crate::error::ServiceError::Cancelled);
+        }
+
+        // Skip if this is the sender
+        if user_pubkey == event.pubkey {
+            continue;
+        }
+
+        // Get tokens grouped by app
+        let tokens_by_app = redis_store::get_tokens_by_app_for_pubkey(&state.redis_pool, &user_pubkey).await?;
+        if tokens_by_app.is_empty() {
+            continue;
+        }
+
+        // Get user's subscriptions
+        let subscriptions_with_timestamps = redis_store::get_all_subscriptions_by_hash(&state.redis_pool, &user_pubkey).await?;
+
+        let event_timestamp = event.created_at.as_u64();
+        let user_pubkey_hex = user_pubkey.to_hex();
+
+        for (app, filter_value, subscription_timestamp) in subscriptions_with_timestamps {
+            // Lazy cleanup
+            if !tokens_by_app.contains_key(&app) {
+                let _ = redis_store::remove_subscription_by_filter(
+                    &state.redis_pool,
+                    &app,
+                    &user_pubkey,
+                    &filter_value
+                ).await;
+
+                if let Ok(filter) = serde_json::from_value::<Filter>(filter_value.clone()) {
+                    let filter_hash = SubscriptionManager::compute_filter_hash(&filter);
+                    let was_removed = state.subscription_manager.remove_user_filter(&app, &user_pubkey_hex, &filter_hash).await;
+
+                    if was_removed {
+                        let mut user_subs = state.user_subscriptions.write().await;
+                        if let Some(subscription_id) = user_subs.remove(&filter_hash) {
+                            state.nostr_client.unsubscribe(&subscription_id).await;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Check timestamp
+            if event_timestamp <= subscription_timestamp {
+                continue;
+            }
+
+            // Parse filter
+            let filter: Filter = match serde_json::from_value(filter_value) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+
+            // Check if filter matches
+            if filter.match_event(event) {
+                // If group_id provided, validate membership
+                if let Some(gid) = group_id {
+                    match state.nip29_client.is_group_member(gid, &user_pubkey).await {
+                        Ok(true) => {
+                            debug!(event_id = %event.id, user = %user_pubkey_hex, group_id = %gid, "User is group member with matching subscription");
+                        }
+                        Ok(false) => {
+                            debug!(event_id = %event.id, user = %user_pubkey_hex, group_id = %gid, "User not a group member, skipping");
+                            break;
+                        }
+                        Err(e) => {
+                            warn!(event_id = %event.id, user = %user_pubkey_hex, error = %e, "Failed to check group membership");
+                            break;
+                        }
+                    }
+                }
+
+                // Send notification
+                if let Err(e) = send_notification_to_user_for_app(state, event, &user_pubkey, &app, token.clone()).await {
+                    if matches!(e, crate::error::ServiceError::Cancelled) {
+                        return Err(e);
+                    }
+                }
+                break; // One match per user is enough
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn handle_custom_subscriptions(
     state: &AppState,
     event: &Event,
@@ -1446,155 +1457,27 @@ pub async fn handle_custom_subscriptions(
         return Err(crate::error::ServiceError::Cancelled);
     }
 
+    // Check custom subscriptions (without group membership validation)
+    check_subscriptions_for_matching_users(state, event, None, token.clone()).await?;
+
     // Track which users we've already processed to avoid duplicates
     let mut processed_users = std::collections::HashSet::new();
 
-    // First, check users with subscriptions
-    let users_with_subscriptions =
-        redis_store::get_all_users_with_subscriptions(&state.redis_pool).await?;
-    
-    info!(event_id = %event.id, "Found {} users with subscriptions", users_with_subscriptions.len());
-
+    // Build set of users who already got notifications via subscriptions
+    let users_with_subscriptions = redis_store::get_all_users_with_subscriptions(&state.redis_pool).await?;
     for user_pubkey in users_with_subscriptions {
-        if token.is_cancelled() {
-            info!(event_id = %event.id, "Cancelled during custom subscription processing");
-            return Err(crate::error::ServiceError::Cancelled);
-        }
-
-        // Skip if this is the sender (don't notify user of their own messages)
-        if user_pubkey == event.pubkey {
-            info!(
-                event_id = %event.id, 
-                user_npub = %user_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
-                sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
-                "Skipping notification for sender in custom subscriptions"
-            );
-            continue;
-        }
-
-        processed_users.insert(user_pubkey);
-
-        // Get tokens grouped by app to enable per-app cleanup
         let tokens_by_app = redis_store::get_tokens_by_app_for_pubkey(&state.redis_pool, &user_pubkey).await?;
-        if tokens_by_app.is_empty() {
-            info!(event_id = %event.id, user = %user_pubkey.to_hex(), "User has no tokens, skipping");
-            continue;
-        }
-        
-        let total_tokens: usize = tokens_by_app.values().map(|v| v.len()).sum();
-        info!(event_id = %event.id, user = %user_pubkey.to_hex(), "User has {} tokens across {} apps", total_tokens, tokens_by_app.len());
-
-        // Get user's subscriptions with timestamps from ALL app namespaces using hash-based storage
-        // Now includes app context to properly route notifications
-        let subscriptions_with_timestamps = redis_store::get_all_subscriptions_by_hash(&state.redis_pool, &user_pubkey).await?;
-        
-        info!(event_id = %event.id, user = %user_pubkey.to_hex(), "User has {} subscriptions", subscriptions_with_timestamps.len());
-
-        // Check if event matches any subscription filter AND was created after subscription
-        // Track which app(s) have matching subscriptions
-        let mut matched_app: Option<String> = None;
-        let event_timestamp = event.created_at.as_u64();
-        let user_pubkey_hex = user_pubkey.to_hex();
-        
-        for (app, filter_value, subscription_timestamp) in subscriptions_with_timestamps {
-            // Lazy cleanup: If user has no tokens for this app, remove the subscription
-            if !tokens_by_app.contains_key(&app) {
-                info!(
-                    event_id = %event.id, 
-                    user = %user_pubkey_hex, 
-                    app = %app, 
-                    "User has subscription but no tokens for app - performing lazy cleanup"
-                );
-                
-                // Remove the subscription from Redis
-                if let Err(e) = redis_store::remove_subscription_by_filter(
-                    &state.redis_pool, 
-                    &app, 
-                    &user_pubkey, 
-                    &filter_value
-                ).await {
-                    warn!(
-                        event_id = %event.id,
-                        user = %user_pubkey_hex,
-                        app = %app,
-                        error = %e,
-                        "Failed to remove orphaned subscription during lazy cleanup"
-                    );
-                }
-                
-                // Also remove from subscription manager if we can parse the filter
-                if let Ok(filter) = serde_json::from_value::<Filter>(filter_value.clone()) {
-                    let filter_hash = SubscriptionManager::compute_filter_hash(&filter);
-                    
-                    // Remove from subscription manager and check if it was the last reference
-                    let was_removed = state.subscription_manager
-                        .remove_user_filter(&app, &user_pubkey_hex, &filter_hash)
-                        .await;
-                    
-                    // If the filter was completely removed (ref_count reached 0), unsubscribe from relay
-                    if was_removed {
-                        let mut user_subs = state.user_subscriptions.write().await;
-                        if let Some(subscription_id) = user_subs.remove(&filter_hash) {
-                            state.nostr_client.unsubscribe(&subscription_id).await;
-                            info!(
-                                event_id = %event.id,
-                                filter_hash = &filter_hash[..8],
-                                subscription_id = %subscription_id,
-                                "Unsubscribed from relay during lazy cleanup (no more users for this filter)"
-                            );
+        if !tokens_by_app.is_empty() {
+            let subscriptions = redis_store::get_all_subscriptions_by_hash(&state.redis_pool, &user_pubkey).await?;
+            for (_, filter_value, subscription_timestamp) in subscriptions {
+                if event.created_at.as_u64() > subscription_timestamp {
+                    if let Ok(filter) = serde_json::from_value::<Filter>(filter_value) {
+                        if filter.match_event(event) {
+                            processed_users.insert(user_pubkey);
+                            break;
                         }
                     }
                 }
-                
-                continue; // Skip to next subscription
-            }
-            
-            // For Live events: always check timestamps - don't send notifications for events that occurred before subscription
-            // For Historical events: also check timestamps during replay
-            // Use strict > (i.e., skip if <=) as per best practice to avoid edge duplicates
-            if event_timestamp <= subscription_timestamp {
-                trace!(
-                    event_id = %event.id, 
-                    user = %user_pubkey, 
-                    event_time = event_timestamp,
-                    subscription_time = subscription_timestamp,
-                    context = ?context,
-                    "Event predates subscription, skipping"
-                );
-                continue;
-            }
-            
-            // Convert the filter value to a Filter object
-            let filter: Filter = match serde_json::from_value(filter_value) {
-                Ok(f) => f,
-                Err(e) => {
-                    warn!(user = %user_pubkey, error = %e, "Invalid filter in stored subscription");
-                    continue;
-                }
-            };
-
-            if filter.match_event(event) {
-                trace!(event_id = %event.id, user = %user_pubkey, app = %app, "Event matches subscription filter and timestamp");
-                matched_app = Some(app);
-                break; // One match is enough
-            }
-        }
-
-        if let Some(app) = matched_app {
-            info!(
-                event_id = %event.id,
-                user_npub = %user_pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
-                sender_npub = %event.pubkey.to_bech32().unwrap_or_else(|_| "unknown".to_string()),
-                app = %app,
-                "Sending notification via custom subscription to specific app"
-            );
-            if let Err(e) =
-                send_notification_to_user_for_app(state, event, &user_pubkey, &app, token.clone()).await
-            {
-                if matches!(e, crate::error::ServiceError::Cancelled) {
-                    return Err(e);
-                }
-                error!(event_id = %event.id, user = %user_pubkey, error = %e, "Failed to send notification");
             }
         }
     }
