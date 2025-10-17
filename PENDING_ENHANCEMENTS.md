@@ -130,26 +130,19 @@ cd /Users/daniel/code/nos/nostr_push_service
 
 ### 2. Refactor Subscription Logic Duplication
 
-**Status**: 🟡 **TECH DEBT**
-**Severity**: MEDIUM
+**Status**: ✅ **RESOLVED** (2025-10-16)
+**Severity**: MEDIUM (was)
 **Created**: 2025-10-16 during NIP-29 fix implementation
 
 **Problem**:
-Subscription checking logic is duplicated between:
-- `handle_group_message` (lines 904-997): With group membership validation
-- `handle_custom_subscriptions` (lines 1357-1508): Without group membership validation
+Subscription checking logic was duplicated between `handle_group_message` and `handle_custom_subscriptions`.
 
-**Impact**:
-- ~80 lines of duplicated code
-- Bug fixes must be applied in two places
-- Maintenance burden
-
-**Proposed Solution**:
-Extract into helper function `check_subscriptions_for_matching_users(group_id: Option<&str>)`
-- When group_id is Some: validate membership
-- When group_id is None: skip membership check
-
-**Estimated Effort**: 1-2 hours
+**Solution**:
+Extracted into helper function `check_subscriptions_for_matching_users(group_id: Option<&str>)`
+- When group_id is Some: validates NIP-29 group membership
+- When group_id is None: skips membership check
+- Eliminated ~80 lines of code duplication
+- Single source of truth for subscription matching logic
 
 ---
 
@@ -238,7 +231,7 @@ Could add per-group rate limiting to prevent notification spam:
 | Date | Issue | Status | Notes |
 |------|-------|--------|-------|
 | 2025-10-16 | #1 NIP-29 custom subscription membership check | ✅ Resolved | Fixed in commit e7401dc |
-| 2025-10-16 | #2 Subscription logic duplication | 🟡 Identified | Tech debt - refactor needed |
+| 2025-10-16 | #2 Subscription logic duplication | ✅ Resolved | Refactored with helper function |
 | 2025-10-16 | #3 Auto-cleanup on ban events | 🟡 Proposed | Enhancement request |
 
 ---
