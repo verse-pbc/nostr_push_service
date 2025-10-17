@@ -150,8 +150,8 @@ Extracted into helper function `check_subscriptions_for_matching_users(group_id:
 
 ### 3. Automatic Cleanup on NIP-29 Ban Events
 
-**Status**: 🟡 **ENHANCEMENT**
-**Severity**: MEDIUM
+**Status**: ✅ **RESOLVED** (2025-10-16)
+**Severity**: MEDIUM (was)
 **Discovered**: 2025-10-16 during Peek integration planning
 
 **Problem**:
@@ -190,10 +190,13 @@ async fn handle_nip29_moderation(state: &AppState, event: &Event) -> Result<()> 
 }
 ```
 
-**Impact**: Lower priority than fix #1 because:
-- Peek users can manually leave communities (triggers kind 3082)
-- With fix #1, banned users won't receive notifications anyway (membership check)
-- But auto-cleanup is good hygiene (prevents Redis bloat)
+**Solution Implemented**:
+Lazy cleanup on membership check failure:
+- When membership check fails during subscription processing, check if filter is specific to that group
+- If filter has exactly one h-tag matching the failed group, safely remove subscription
+- If filter targets multiple groups or has no h-tag, keep it (might be valid for other groups/events)
+- Self-healing without monitoring moderation events
+- Zero added complexity - cleanup happens where membership is already checked
 
 ---
 
@@ -232,7 +235,7 @@ Could add per-group rate limiting to prevent notification spam:
 |------|-------|--------|-------|
 | 2025-10-16 | #1 NIP-29 custom subscription membership check | ✅ Resolved | Fixed in commit e7401dc |
 | 2025-10-16 | #2 Subscription logic duplication | ✅ Resolved | Refactored with helper function |
-| 2025-10-16 | #3 Auto-cleanup on ban events | 🟡 Proposed | Enhancement request |
+| 2025-10-16 | #3 Auto-cleanup on ban events | ✅ Resolved | Lazy cleanup on membership failure |
 
 ---
 
