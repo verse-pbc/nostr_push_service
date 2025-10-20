@@ -1,5 +1,5 @@
 nostr:
-  relay_url: "wss://communities.nos.social" # URL of the NIP-29 relay to connect to
+  relay_url: "wss://communities2.nos.social" # URL of the NIP-29 relay to connect to
   # Relay's private key (needed for NIP-29 access - !! HANDLE SECURELY !!)
   # It's better to load this from env var or secrets manager
   # relay_private_key_hex: "relay_private_key_hex_here"
@@ -65,6 +65,22 @@ apps:
       - 34552 # Declined members list updates
       - 34553 # Banned members list updates
       - 9735  # Zaps
+
+  - name: "peek"
+    frontend_config:
+      api_key: "AIzaSyBh7apbudr8p4sAkaV22YqhofYLE3VrQo8"
+      auth_domain: "peek-afe3d.firebaseapp.com"
+      project_id: "peek-afe3d"
+      storage_bucket: "peek-afe3d.firebasestorage.app"
+      messaging_sender_id: "784762775027"
+      app_id: "1:784762775027:web:3fcfca122fc107d2655e86"
+      measurement_id: "G-YZV5FC13Q0"
+      vapid_public_key: "BJqaEQtkAj3PmdQ7iHleib_fA9Fpu4v5nPqGm-tw4AjS8HTOcGvsqjhhSHJo-S3Dp-zpQNyOj1uAxHLjuWsyJTw"
+    # K8s: /app/secrets/firebase-peek.json
+    # Local: ./firebase-service-account-peek.json
+    credentials_path: "/app/secrets/firebase-peek.json"
+    allowed_subscription_kinds: # Kinds this app can subscribe to via user filters
+      - 9     # Zap goals / fundraising events
 
 cleanup:
   enabled: true
