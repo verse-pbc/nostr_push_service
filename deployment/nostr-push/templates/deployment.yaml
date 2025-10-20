@@ -31,7 +31,7 @@ spec:
             - name: FRONTEND_APP
               value: universes
             - name: NOSTR_PUSH__NOSTR__RELAY_URL
-              value: wss://communities.nos.social
+              value: wss://communities2.nos.social
             - name: NOSTR_PUSH__SERVICE__PRIVATE_KEY_HEX
               valueFrom:
                 secretKeyRef:
@@ -112,6 +112,8 @@ spec:
                 path: firebase-nostrpushdemo.json
               - key: firebase-universes-credentials
                 path: firebase-universes.json
+              - key: firebase-peek-credentials
+                path: firebase-peek.json
 
 
                 

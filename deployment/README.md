@@ -4,7 +4,7 @@ This guide explains how to deploy the Nostr Push Service to Kubernetes with supp
 
 ## Overview
 
-The service supports multiple apps (nostrpushdemo and universes), each with its own Firebase project and credentials. K8s secrets are mounted as actual files in the container.
+The service supports multiple apps (nostrpushdemo, universes, and peek), each with its own Firebase project and credentials. K8s secrets are mounted as actual files in the container.
 
 ## How K8s Secrets Work
 
@@ -24,6 +24,8 @@ env:
     value: /app/secrets/firebase-nostrpushdemo.json
   - name: NOSTR_PUSH__APPS__UNIVERSES__CREDENTIALS_PATH
     value: /app/secrets/firebase-universes.json
+  - name: NOSTR_PUSH__APPS__PEEK__CREDENTIALS_PATH
+    value: /app/secrets/firebase-peek.json
 
 volumes:
   - name: google-application-credentials
@@ -34,6 +36,8 @@ volumes:
           path: firebase-nostrpushdemo.json
         - key: firebase-universes-credentials
           path: firebase-universes.json
+        - key: firebase-peek-credentials
+          path: firebase-peek.json
 ```
 
 ## Creating Secrets
@@ -43,6 +47,7 @@ volumes:
 kubectl create secret generic nostr-push-secret \
   --from-file=firebase-nostrpushdemo-credentials=./firebase-service-account-nostrpushdemo.json \
   --from-file=firebase-universes-credentials=./firebase-service-account-universes.json \
+  --from-file=firebase-peek-credentials=./firebase-service-account-peek.json \
   --from-literal=app-nip29-relay-private-key="your_private_key_hex" \
   --from-literal=redis-connection-string="redis://your-redis:6379" \
   --namespace=nostr-push
@@ -62,6 +67,7 @@ kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/downloa
 kubectl create secret generic nostr-push-secret --dry-run=client -o yaml \
   --from-file=firebase-nostrpushdemo-credentials=./firebase-service-account-nostrpushdemo.json \
   --from-file=firebase-universes-credentials=./firebase-service-account-universes.json \
+  --from-file=firebase-peek-credentials=./firebase-service-account-peek.json \
   --from-literal=app-nip29-relay-private-key="your_key" \
   --from-literal=redis-connection-string="redis://redis:6379" \
   | kubeseal -o yaml > sealed-secret.yaml
@@ -76,6 +82,7 @@ git commit -m "Update sealed secrets"
 1. **Prepare Firebase Credentials**
    - Download service account JSON for `plur-push-local` (nostrpushdemo)
    - Download service account JSON for `universes-2bc44` (universes)
+   - Download service account JSON for `peek-afe3d` (peek)
 
 2. **Create Namespace**
    ```bash
@@ -110,6 +117,7 @@ Each app needs one of these:
 Where `<APPNAME>` is:
 - `NOSTRPUSHDEMO` for the demo app
 - `UNIVERSES` for the Universes app
+- `PEEK` for the Peek app
 
 ## Troubleshooting
 
