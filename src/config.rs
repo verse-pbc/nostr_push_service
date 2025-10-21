@@ -12,6 +12,8 @@ pub struct Settings {
     pub cleanup: CleanupSettings,
     #[serde(default = "default_server_settings")]
     pub server: ServerSettings,
+    #[serde(default)]
+    pub notification: Option<NotificationSettings>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -74,6 +76,14 @@ pub struct CleanupSettings {
 pub struct ServerSettings {
     #[serde(default = "default_listen_addr")]
     pub listen_addr: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct NotificationSettings {
+    pub profile_relays: Vec<String>,
+    pub profile_cache_ttl_secs: u64,
+    pub group_meta_cache_ttl_secs: u64,
+    pub query_timeout_secs: u64,
 }
 
 fn default_server_settings() -> ServerSettings {

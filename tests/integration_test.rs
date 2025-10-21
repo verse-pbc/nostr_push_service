@@ -160,6 +160,7 @@ async fn setup_test_environment() -> Result<(
         user_subscriptions,
         subscription_manager,
         community_handler,
+        notification_config: None,
     };
 
     Ok((

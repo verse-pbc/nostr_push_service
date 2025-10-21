@@ -81,6 +81,7 @@ async fn create_test_state() -> (Arc<AppState>, Arc<MockFcmSender>) {
         user_subscriptions,
         subscription_manager,
         community_handler,
+        notification_config: None,
     });
     
     (state, mock_fcm)

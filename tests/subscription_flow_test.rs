@@ -54,6 +54,7 @@ fn create_test_settings() -> Settings {
         server: nostr_push_service::config::ServerSettings {
             listen_addr: "0.0.0.0:8000".to_string(),
         },
+        notification: None,
     }
 }
 

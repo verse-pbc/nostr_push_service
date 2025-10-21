@@ -95,6 +95,7 @@ async fn setup_test_state() -> Result<(Arc<AppState>, Arc<nostr_push_service::fc
         user_subscriptions,
         subscription_manager,
         community_handler,
+        notification_config: None,
     };
 
     Ok((Arc::new(app_state), mock_fcm_arc))

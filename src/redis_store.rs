@@ -1059,3 +1059,37 @@ pub async fn get_all_subscriptions_by_hash(
     
     Ok(all_filters)
 }
+
+/// Get a cached string value from Redis
+pub async fn get_cached_string(pool: &RedisPool, key: &str) -> Result<Option<String>> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+
+    let value: Option<String> = redis::cmd("GET")
+        .arg(key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+
+    Ok(value)
+}
+
+/// Set a cached string value in Redis with TTL
+pub async fn set_cached_string(pool: &RedisPool, key: &str, value: &str, ttl_secs: u64) -> Result<()> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
+
+    redis::cmd("SETEX")
+        .arg(key)
+        .arg(ttl_secs)
+        .arg(value)
+        .query_async::<()>(&mut *conn)
+        .await
+        .map_err(ServiceError::Redis)?;
+
+    Ok(())
+}
