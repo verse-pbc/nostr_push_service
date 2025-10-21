@@ -85,3 +85,12 @@ cleanup:
   enabled: true
   interval_secs: 86400 # Run once a day
   token_max_age_days: 90
+
+notification:
+  profile_relays:
+    - wss://relay.nos.social
+    - wss://purplepag.es
+    - wss://relay.damus.io
+  profile_cache_ttl_secs: 3600 # 1 hour
+  group_meta_cache_ttl_secs: 3600 # 1 hour
+  query_timeout_secs: 3

@@ -74,6 +74,7 @@ fn create_test_settings(service_private_hex: String) -> Settings {
         server: nostr_push_service::config::ServerSettings {
             listen_addr: "127.0.0.1:8080".to_string(),
         },
+        notification: None,
     }
 }
 
@@ -140,6 +141,7 @@ async fn create_test_app_state(settings: Settings, cleanup_app: Option<&str>) ->
         user_subscriptions,
         subscription_manager,
         community_handler,
+        notification_config: None,
     })
 }
 

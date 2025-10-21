@@ -27,6 +27,7 @@ pub struct AppState {
     pub user_subscriptions: Arc<RwLock<HashMap<String, SubscriptionId>>>,  // filter_hash -> SubscriptionId
     pub subscription_manager: Arc<SubscriptionManager>,
     pub community_handler: Arc<CommunityHandler>,
+    pub notification_config: Option<crate::config::NotificationSettings>,
 }
 
 impl AppState {
@@ -132,7 +133,10 @@ impl AppState {
         
         // Initialize the shared user subscriptions map
         let user_subscriptions = Arc::new(RwLock::new(HashMap::new()));
-        
+
+        // Clone notification config for use in event handler
+        let notification_config = settings.notification.clone();
+
         Ok(AppState {
             settings,
             redis_pool,
@@ -145,6 +149,7 @@ impl AppState {
             user_subscriptions,
             subscription_manager,
             community_handler,
+            notification_config,
         })
     }
 }

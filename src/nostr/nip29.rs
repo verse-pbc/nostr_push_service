@@ -458,6 +458,7 @@ mod tests {
             server: crate::config::ServerSettings {
                 listen_addr: "0.0.0.0:8000".to_string(),
             },
+            notification: None,
         };
 
         // Use the from_settings constructor which doesn't connect
