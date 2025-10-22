@@ -10,6 +10,7 @@ use crate::{
 use nostr_sdk::{Client, Keys, SubscriptionId};
 use std::{collections::{HashMap, HashSet}, env, sync::Arc};
 use tokio::sync::RwLock;
+use tracing::{info, warn};
 
 use crate::error::ServiceError;
 use crate::nostr::nip29::{init_nip29_client, Nip29Client};
