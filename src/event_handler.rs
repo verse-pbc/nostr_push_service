@@ -1652,13 +1652,13 @@ async fn fetch_sender_name(
     if let Ok(Some(cached)) = redis_store::get_cached_string(pool, &cache_key).await {
         if let Ok(profile) = serde_json::from_str::<ProfileCache>(&cached) {
             if profile.is_valid(config.profile_cache_ttl_secs) {
-                debug!(pubkey = %pubkey, "Profile cache hit");
+                info!(pubkey = %pubkey, "Profile cache hit");
                 return profile.display_name;
             }
         }
     }
 
-    debug!(pubkey = %pubkey, "Profile cache miss, querying relays");
+    info!(pubkey = %pubkey, "Profile cache miss, querying relays");
 
     let filter = Filter::new()
         .kind(Kind::Metadata)
@@ -1681,7 +1681,7 @@ async fn fetch_sender_name(
                     .map(|s| s.to_string());
 
                 if let Some(display_name) = name {
-                    debug!(pubkey = %pubkey, name = %display_name, "Found profile name");
+                    info!(pubkey = %pubkey, name = %display_name, "Found profile name");
 
                     let cache_value = ProfileCache {
                         display_name: display_name.clone(),
@@ -1703,7 +1703,7 @@ async fn fetch_sender_name(
         }
     }
 
-    debug!(pubkey = %pubkey, "Profile query failed or no name found, using short npub");
+    info!(pubkey = %pubkey, "Profile query failed or no name found, using short npub");
     pubkey.to_bech32().unwrap().chars().take(20).collect()
 }
 
@@ -1718,7 +1718,7 @@ async fn fetch_group_metadata(
     if let Ok(Some(cached)) = redis_store::get_cached_string(pool, &cache_key).await {
         if let Ok(meta) = serde_json::from_str::<GroupMetadataCache>(&cached) {
             if meta.is_valid(config.group_meta_cache_ttl_secs) {
-                debug!(h_tag = %h_tag, "Group metadata cache hit");
+                info!(h_tag = %h_tag, "Group metadata cache hit");
                 return Some(GroupMetadata {
                     name: meta.name,
                     uuid: meta.uuid,
@@ -1727,7 +1727,7 @@ async fn fetch_group_metadata(
         }
     }
 
-    debug!(h_tag = %h_tag, "Group metadata cache miss, querying relay");
+    info!(h_tag = %h_tag, "Group metadata cache miss, querying relay");
 
     let filter = Filter::new()
         .kind(Kind::Custom(39000))
@@ -1782,7 +1782,7 @@ async fn fetch_group_metadata(
         }
     }
 
-    debug!(h_tag = %h_tag, "Group metadata query failed or not found");
+    info!(h_tag = %h_tag, "Group metadata query failed or not found");
     None
 }
 
