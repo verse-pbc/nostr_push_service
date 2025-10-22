@@ -137,6 +137,18 @@ impl AppState {
         // Clone notification config for use in event handler
         let notification_config = settings.notification.clone();
 
+        // DEBUG: Log whether notification config loaded successfully
+        if let Some(ref config) = notification_config {
+            info!(
+                "✅ Notification config loaded - profile_relays: {:?}, profile_cache_ttl: {}s, group_cache_ttl: {}s",
+                config.profile_relays,
+                config.profile_cache_ttl_secs,
+                config.group_meta_cache_ttl_secs
+            );
+        } else {
+            warn!("⚠️  Notification config is None - rich notifications DISABLED. Check settings.yaml 'notification:' section");
+        }
+
         Ok(AppState {
             settings,
             redis_pool,
