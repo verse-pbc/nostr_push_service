@@ -1798,20 +1798,23 @@ async fn create_fcm_payload(
         .map(|s| s.to_string());
 
     let (sender_name, group_metadata) = if let Some(ref config) = state.notification_config {
-        let client = state.nip29_client.client();
+        // Use profile_client for sender name (user profiles on public relays)
+        let profile_client = state.profile_client.clone();
 
         let sender_name = fetch_sender_name(
             &event.pubkey,
             &state.redis_pool,
-            &client,
+            &profile_client,
             config
         ).await;
 
+        // Use nip29_client for group metadata (groups on NIP-29 relay)
         let group_metadata = if event.kind == Kind::Custom(9) && h_tag.is_some() {
+            let nip29_client = state.nip29_client.client();
             fetch_group_metadata(
                 h_tag.as_ref().unwrap(),
                 &state.redis_pool,
-                &client,
+                &nip29_client,
                 config
             ).await
         } else {
