@@ -156,7 +156,8 @@ async fn setup_test_environment() -> Result<(
         service_keys: Some(test_service_keys.clone()),
         crypto_service: Some(nostr_push_service::crypto::CryptoService::new(test_service_keys)),
         nip29_client: Arc::new(nip29_client), // Add initialized Nip29Client
-        nostr_client,
+        nostr_client: nostr_client.clone(),
+        profile_client: nostr_client.clone(),
         user_subscriptions,
         subscription_manager,
         community_handler,

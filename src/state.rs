@@ -25,6 +25,7 @@ pub struct AppState {
     pub crypto_service: Option<CryptoService>,
     pub nip29_client: Arc<Nip29Client>,
     pub nostr_client: Arc<Client>,  // Shared nostr client for direct subscription management
+    pub profile_client: Arc<Client>,  // Dedicated client for profile/metadata queries
     pub user_subscriptions: Arc<RwLock<HashMap<String, SubscriptionId>>>,  // filter_hash -> SubscriptionId
     pub subscription_manager: Arc<SubscriptionManager>,
     pub community_handler: Arc<CommunityHandler>,
@@ -131,12 +132,32 @@ impl AppState {
         
         // Get the nostr client from nip29_client
         let nostr_client = nip29_client.client();
-        
-        // Initialize the shared user subscriptions map
-        let user_subscriptions = Arc::new(RwLock::new(HashMap::new()));
 
         // Clone notification config for use in event handler
         let notification_config = settings.notification.clone();
+
+        // Create dedicated profile client for metadata queries
+        let profile_client = if let Some(ref notification_config) = notification_config {
+            let client = Client::default();
+            for relay_url in &notification_config.profile_relays {
+                if let Err(e) = client.add_relay(relay_url).await {
+                    warn!("Failed to add profile relay {}: {}", relay_url, e);
+                } else {
+                    info!("Added profile relay: {}", relay_url);
+                }
+            }
+
+            // Connect to relays
+            client.connect().await;
+            Arc::new(client)
+        } else {
+            // Fallback to nip29 client if no profile config
+            warn!("No notification config - profile queries will use groups relay");
+            nip29_client.client()
+        };
+
+        // Initialize the shared user subscriptions map
+        let user_subscriptions = Arc::new(RwLock::new(HashMap::new()));
 
         // DEBUG: Log whether notification config loaded successfully
         if let Some(ref config) = notification_config {
@@ -159,6 +180,7 @@ impl AppState {
             crypto_service,
             nip29_client,
             nostr_client,
+            profile_client,
             user_subscriptions,
             subscription_manager,
             community_handler,
