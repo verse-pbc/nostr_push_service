@@ -9,6 +9,7 @@ use nostr_push_service::{
 
 /// Test that subscriptions can be recovered from Redis on startup
 #[tokio::test]
+#[ignore] // Integration test - requires Redis, may have cross-test data
 async fn test_subscription_recovery_from_redis() -> Result<()> {
     dotenvy::dotenv().ok();
     
@@ -113,6 +114,7 @@ async fn test_subscription_recovery_from_redis() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // Integration test - requires Redis, may have cross-test data
 async fn test_subscription_recovery_with_multiple_apps() -> Result<()> {
     dotenvy::dotenv().ok();
     
