@@ -162,6 +162,7 @@ async fn setup_test_environment() -> Result<(
         subscription_manager,
         community_handler,
         notification_config: None,
+        mention_parser_service: None,
     };
 
     Ok((

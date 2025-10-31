@@ -143,6 +143,7 @@ async fn create_test_app_state(settings: Settings, cleanup_app: Option<&str>) ->
         subscription_manager,
         community_handler,
         notification_config: None,
+        mention_parser_service: None,
     })
 }
 

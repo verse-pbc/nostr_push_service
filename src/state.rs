@@ -5,9 +5,10 @@ use crate::{
     fcm_sender::FcmClient,
     handlers::CommunityHandler,
     redis_store::{self, RedisPool},
+    services::mention_parser::MentionParserService,
     subscriptions::SubscriptionManager,
 };
-use nostr_sdk::{Client, Keys, SubscriptionId};
+use nostr_sdk::{Client, Keys, Options, SubscriptionId};
 use std::{collections::{HashMap, HashSet}, env, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -30,6 +31,7 @@ pub struct AppState {
     pub subscription_manager: Arc<SubscriptionManager>,
     pub community_handler: Arc<CommunityHandler>,
     pub notification_config: Option<crate::config::NotificationSettings>,
+    pub mention_parser_service: Option<Arc<MentionParserService>>,
 }
 
 impl AppState {
@@ -171,6 +173,47 @@ impl AppState {
             warn!("⚠️  Notification config is None - rich notifications DISABLED. Check settings.yaml 'notification:' section");
         }
 
+        // Initialize mention parser service if notification config is available
+        let mention_parser_service = if let Some(ref config) = notification_config {
+            // Create a dedicated client for profile fetching with the configured relays
+            let profile_client_opts = Options::default()
+                .autoconnect(true)
+                .automatic_authentication(false);
+            
+            let profile_client = Client::builder()
+                .opts(profile_client_opts)
+                .build();
+            
+            // Add all profile relays
+            for relay_url in &config.profile_relays {
+                if let Err(e) = profile_client.add_relay(relay_url).await {
+                    warn!(relay_url = %relay_url, error = %e, "Failed to add profile relay");
+                } else {
+                    info!(relay_url = %relay_url, "Added profile relay for mention parser");
+                }
+            }
+            
+            // Connect to the relays
+            profile_client.connect().await;
+            
+            // Wait a bit for connections to establish
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            
+            Some(Arc::new(MentionParserService::new(
+                redis_pool.clone(),
+                Arc::new(profile_client),
+                config.profile_cache_ttl_secs,
+            )))
+        } else {
+            None
+        };
+
+        if mention_parser_service.is_some() {
+            info!("✅ Mention parser service initialized with dedicated profile client");
+        } else {
+            warn!("⚠️  Mention parser service disabled - mentions will not be formatted in notifications");
+        }
+
         Ok(AppState {
             settings,
             redis_pool,
@@ -185,6 +228,7 @@ impl AppState {
             subscription_manager,
             community_handler,
             notification_config,
+            mention_parser_service,
         })
     }
 }
