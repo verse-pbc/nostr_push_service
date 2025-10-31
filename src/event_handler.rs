@@ -1850,13 +1850,26 @@ async fn create_fcm_payload(
         }
     };
 
+    // Format content with mention parser if available
+    let formatted_content = if let Some(ref mention_parser) = state.mention_parser_service {
+        match mention_parser.format_content_for_push(&event.content).await {
+            Ok(formatted) => formatted,
+            Err(e) => {
+                warn!(event_id = %event.id, error = %e, "Failed to format mentions, using original content");
+                event.content.clone()
+            }
+        }
+    } else {
+        event.content.clone()
+    };
+
     let body: String = if event.kind == Kind::GiftWrap {
         "You have a new encrypted message".to_string()
     } else {
         format!(
             "{}: {}",
             sender_name,
-            event.content.chars().take(150).collect::<String>()
+            formatted_content.chars().take(150).collect::<String>()
         )
     };
 

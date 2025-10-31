@@ -1764,6 +1764,7 @@ dependencies = [
  "once_cell",
  "portpicker",
  "redis",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

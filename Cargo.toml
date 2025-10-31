@@ -43,6 +43,7 @@ bb8-redis = { version = "0.21.0" }
 nostr-sdk = { version = "0.41.0", features = ["nip44"] }
 hex = "0.4.3"
 url = "2.5"
+regex = "1.10"
 
 # --- Utilities ---
 chrono = { version = "0.4", features = ["serde"] }

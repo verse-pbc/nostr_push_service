@@ -13,5 +13,6 @@ pub mod nostr;
 pub mod nostr_listener;
 pub mod redis;
 pub mod redis_store;
+pub mod services;
 pub mod state;
 pub mod subscriptions;
