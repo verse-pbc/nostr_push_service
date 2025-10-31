@@ -964,6 +964,7 @@ pub async fn get_subscriptions_by_hash(
 }
 
 /// Get all active subscriptions from all users and apps for recovery on startup
+/// Returns HashMap with key format "app:{app}:{pubkey}:{filter_hash}" and filter as value
 pub async fn get_all_active_subscriptions(
     pool: &RedisPool,
 ) -> Result<HashMap<String, serde_json::Value>> {
@@ -972,8 +973,8 @@ pub async fn get_all_active_subscriptions(
         .await
         .map_err(|e| ServiceError::Internal(format!("Failed to get Redis connection: {}", e)))?;
     
-    // Find all subscription keys across all apps and users
-    let pattern = "subscription:*:*:*";
+    // Find all subscription keys across all apps and users (new hash-based format)
+    let pattern = "app:*:subscriptions:*";
     let keys: Vec<String> = redis::cmd("KEYS")
         .arg(pattern)
         .query_async(&mut *conn)
@@ -983,16 +984,40 @@ pub async fn get_all_active_subscriptions(
     let mut subscriptions = HashMap::new();
     
     for key in keys {
-        // Get the filter data
-        let filter_json: Option<String> = redis::cmd("GET")
+        // Key format: app:{app}:subscriptions:{pubkey}
+        let parts: Vec<&str> = key.split(':').collect();
+        if parts.len() < 4 {
+            warn!("Invalid subscription key format: {}", key);
+            continue;
+        }
+        
+        let app = parts[1];
+        let pubkey = parts[3];
+        
+        // Get all filter hashes for this user
+        let hashes: Vec<String> = redis::cmd("SMEMBERS")
             .arg(&key)
             .query_async(&mut *conn)
             .await
             .map_err(ServiceError::Redis)?;
         
-        if let Some(json_str) = filter_json {
-            if let Ok(filter) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                subscriptions.insert(key, filter);
+        // Retrieve each filter's data
+        for hash in hashes {
+            let filter_data_key = format!("app:{}:filter:{}", app, hash);
+            let data_json: Option<String> = redis::cmd("GET")
+                .arg(&filter_data_key)
+                .query_async(&mut *conn)
+                .await
+                .map_err(ServiceError::Redis)?;
+            
+            if let Some(json_str) = data_json {
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    if let Some(filter) = data.get("filter").cloned() {
+                        // Create a key in the expected format for the listener
+                        let subscription_key = format!("subscription:{}:{}:{}", app, pubkey, hash);
+                        subscriptions.insert(subscription_key, filter);
+                    }
+                }
             }
         }
     }
