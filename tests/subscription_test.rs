@@ -71,6 +71,7 @@ async fn create_test_state() -> Arc<AppState> {
         subscription_manager,
         community_handler,
         notification_config: None,
+        mention_parser_service: None,
     })
 }
 
